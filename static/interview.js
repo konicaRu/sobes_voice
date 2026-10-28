@@ -13,6 +13,7 @@ const state = {
   audio: null,
   recorder: null,
   timer: null,
+  phaseTimer: null,
 };
 
 let callbacks = { onBack: () => {}, onRestart: () => {} };
@@ -49,6 +50,14 @@ function setPhase(phase) {
     'feedback-speaking': 'Озвучиваю…',
   };
   mic.textContent = labels[phase];
+  clearInterval(state.phaseTimer);
+  if (['transcribing', 'reviewing'].includes(phase)) {
+    // пока модель работает, показываем секунды, чтобы было видно, что процесс идёт
+    const started = Date.now();
+    state.phaseTimer = setInterval(() => {
+      mic.textContent = `${labels[phase]} ${Math.floor((Date.now() - started) / 1000)} с`;
+    }, 500);
+  }
   mic.disabled = !['idle', 'recording'].includes(phase);
   const free = phase === 'idle';
   const answered = !$('transcript-card').hidden;

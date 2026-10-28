@@ -1,6 +1,7 @@
 import json
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
@@ -62,7 +63,14 @@ class LlmClient:
             raise LlmError("В LM Studio не загружена модель. Загрузите чат-модель и повторите.")
         return chat_models[0]
 
-    def chat_json(self, messages: list[dict], model_cls: type[T], temperature: float | None = None) -> T:
+    def chat_json(
+        self,
+        messages: list[dict],
+        model_cls: type[T],
+        temperature: float | None = None,
+        on_progress: Callable[[int], None] | None = None,
+    ) -> T:
+        """С on_progress ответ читается потоком, и колбэк получает число уже написанных символов."""
         model = self.get_model()
         temperature = self._temperature if temperature is None else temperature
         working = [dict(m) for m in messages]
@@ -72,17 +80,21 @@ class LlmClient:
         }
         for _ in range(self._retries + 1):
             started = time.perf_counter()
+            options = dict(
+                model=model,
+                messages=self._prepare(working),
+                temperature=temperature,
+                max_tokens=self._max_tokens,
+                response_format=response_format,
+            )
             try:
-                response = self._client.chat.completions.create(
-                    model=model,
-                    messages=self._prepare(working),
-                    temperature=temperature,
-                    max_tokens=self._max_tokens,
-                    response_format=response_format,
-                )
+                if on_progress is None:
+                    response = self._client.chat.completions.create(**options)
+                    raw = response.choices[0].message.content or ""
+                else:
+                    response, raw = None, self._read_stream(options, on_progress)
             except Exception as exc:
                 raise LlmError(f"LM Studio не ответил: {exc}") from exc
-            raw = response.choices[0].message.content or ""
             self._log(model, working, raw, time.perf_counter() - started, response)
             try:
                 return model_cls.model_validate(extract_json(raw))
@@ -92,6 +104,17 @@ class LlmClient:
                     {"role": "user", "content": f"Ответ не прошёл проверку JSON по схеме ({exc}). Верни только корректный JSON."},
                 ]
         raise LlmError(f"Модель не вернула корректный JSON после {self._retries + 1} попыток.")
+
+    def _read_stream(self, options: dict, on_progress: Callable[[int], None]) -> str:
+        parts: list[str] = []
+        written = 0
+        for chunk in self._client.chat.completions.create(stream=True, **options):
+            piece = chunk.choices[0].delta.content if chunk.choices else None
+            if piece:
+                parts.append(piece)
+                written += len(piece)
+                on_progress(written)
+        return "".join(parts)
 
     def _prepare(self, messages: list[dict]) -> list[dict]:
         prepared = [dict(m) for m in messages]

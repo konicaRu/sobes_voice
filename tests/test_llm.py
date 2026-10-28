@@ -30,7 +30,11 @@ class FakeOpenAI:
         if self.error:
             raise self.error
         self.requests.append(kwargs)
-        return NS(choices=[NS(message=NS(content=self.replies.pop(0)))], usage=NS(completion_tokens=10))
+        reply = self.replies.pop(0)
+        if kwargs.get("stream"):
+            pieces = [reply[i : i + 5] for i in range(0, len(reply), 5)]
+            return iter([NS(choices=[NS(delta=NS(content=piece))]) for piece in pieces] + [NS(choices=[])])
+        return NS(choices=[NS(message=NS(content=reply))], usage=NS(completion_tokens=10))
 
 
 def make(fake, **kwargs):
@@ -89,6 +93,30 @@ def test_chat_json_temperature_can_be_overridden_per_call():
     client.chat_json([{"role": "user", "content": "x"}], Out)
     client.chat_json([{"role": "user", "content": "x"}], Out, temperature=0.0)
     assert [r["temperature"] for r in fake.requests] == [0.3, 0.0]
+
+
+def test_chat_json_streams_and_reports_progress_when_callback_given():
+    reply = '{"verdict": "ok", "score": 4}'
+    fake = FakeOpenAI(replies=[reply])
+    seen = []
+    result = make(fake).chat_json([{"role": "user", "content": "x"}], Out, on_progress=seen.append)
+    assert result == Out(verdict="ok", score=4)
+    assert fake.requests[0]["stream"] is True
+    assert len(seen) > 1 and seen == sorted(seen) and seen[-1] == len(reply)
+
+
+def test_chat_json_does_not_stream_without_callback():
+    fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}'])
+    make(fake).chat_json([{"role": "user", "content": "x"}], Out)
+    assert not fake.requests[0].get("stream")
+
+
+def test_streamed_reply_is_retried_and_logged_like_a_normal_one(tmp_path):
+    log = tmp_path / "llm.jsonl"
+    fake = FakeOpenAI(replies=["не json", '{"verdict": "ok", "score": 4}'])
+    result = make(fake, log_path=log).chat_json([{"role": "user", "content": "x"}], Out, on_progress=lambda n: None)
+    assert result.score == 4 and len(fake.requests) == 2
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 2
 
 
 def test_chat_json_appends_no_think_when_enabled():

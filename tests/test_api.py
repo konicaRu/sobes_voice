@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -350,19 +351,51 @@ def test_review_uses_question_criteria_and_transcript(make_client):
     assert "Первый вопрос?" in user_message and "критерий" in user_message and "мой ответ" in user_message
 
 
-def test_build_profile_needs_resume_or_cases_and_is_cached(make_client):
+def wait_for_profile(client, interview_id, timeout=5.0):
+    """Сборка профиля идёт в фоне: ждём, пока статус перестанет быть «running»."""
+    deadline = time.time() + timeout
+    while True:
+        status = client.get(f"/api/interviews/{interview_id}/profile/status").json()
+        if status["state"] != "running" or time.time() > deadline:
+            return status
+        time.sleep(0.02)
+
+
+def test_profile_status_is_idle_before_any_build(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    assert client.get(f"/api/interviews/{interview_id}/profile/status").json()["state"] == "idle"
+
+
+def test_build_profile_needs_resume_or_cases_runs_in_background_and_is_cached(make_client):
     llm = FakeLlm()
     client = make_client(llm=llm)
     interview_id = new_interview(client)["id"]
     assert client.post(f"/api/interviews/{interview_id}/profile").status_code == 409
     upload(client, interview_id, "resume", "cv.md", "Аналитик, A/B-тесты, SQL".encode())
     upload(client, interview_id, "cases", "кейс.md", "Retention вырос на 5%".encode())
-    response = client.post(f"/api/interviews/{interview_id}/profile")
-    assert response.status_code == 200
-    assert response.json()["profile"] == "Профиль: вёл A/B-тесты, retention +5%."
+    started = client.post(f"/api/interviews/{interview_id}/profile")
+    assert started.status_code == 200
+    assert started.json()["state"] in ("running", "done")
+    status = wait_for_profile(client, interview_id)
+    assert status["state"] == "done" and status["percent"] == 100
+    assert status["profile"] == "Профиль: вёл A/B-тесты, retention +5%."
     user = llm.calls[0][1]["content"]
     assert "A/B-тесты, SQL" in user and "Retention вырос на 5%" in user
-    assert client.get(f"/api/interviews/{interview_id}").json()["profile"] == response.json()["profile"]
+    assert client.get(f"/api/interviews/{interview_id}").json()["profile"] == status["profile"]
+
+
+def test_profile_build_error_is_reported_in_status_and_can_be_retried(make_client):
+    llm = FakeLlm(error=LlmError("LM Studio не отвечает."))
+    client = make_client(llm=llm)
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "resume", "cv.md", "Аналитик".encode())
+    client.post(f"/api/interviews/{interview_id}/profile")
+    status = wait_for_profile(client, interview_id)
+    assert status["state"] == "error" and status["message"] == "LM Studio не отвечает."
+    llm.error = None
+    client.post(f"/api/interviews/{interview_id}/profile")
+    assert wait_for_profile(client, interview_id)["state"] == "done"
 
 
 def test_profile_can_be_edited_by_user(make_client):

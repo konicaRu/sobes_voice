@@ -36,27 +36,70 @@ function renderSlots() {
     return card;
   }));
   $('parse-btn').disabled = ctx.documents.questions.length === 0;
-  $('profile-btn').disabled = ctx.documents.resume.length + ctx.documents.cases.length === 0;
+  updateProfileButton();
 }
 
 // ---------- профиль кандидата ----------
 
+let profileTimer = null;
+
+function updateProfileButton() {
+  const hasSources = ctx.documents.resume.length + ctx.documents.cases.length > 0;
+  $('profile-btn').disabled = ctx.profileRunning || !hasSources;
+}
+
+export function stopProfilePolling() {
+  clearInterval(profileTimer);
+  profileTimer = null;
+}
+
+function applyProfileStatus(status) {
+  ctx.profileRunning = status.state === 'running';
+  $('profile-progress').hidden = !ctx.profileRunning;
+  $('profile-progress').value = status.percent;
+  $('profile-btn').textContent = ctx.profileRunning ? 'Собираю профиль…' : 'Собрать профиль из резюме и кейсов';
+  if (ctx.profileRunning) {
+    $('profile-status').textContent = `${status.message} ${status.percent}% · ${status.elapsed} с`;
+  } else {
+    stopProfilePolling();
+    if (status.state === 'done') {
+      $('profile-text').value = status.profile;
+      $('profile-status').textContent = `Профиль собран и сохранён за ${status.elapsed} с. Проверьте факты и цифры.`;
+    } else if (status.state === 'error') {
+      $('profile-status').textContent = '';
+      showError(status.message);
+    }
+  }
+  updateProfileButton();
+}
+
+async function pollProfile(interviewId) {
+  if ($('prepare').hidden || ctx.id !== interviewId) {
+    stopProfilePolling();
+    return;
+  }
+  try {
+    applyProfileStatus(await json(`/api/interviews/${interviewId}/profile/status`));
+  } catch (error) {
+    stopProfilePolling();
+    showError(error.message);
+  }
+}
+
+function startProfilePolling() {
+  stopProfilePolling();
+  const interviewId = ctx.id;
+  profileTimer = setInterval(() => pollProfile(interviewId), 700);
+}
+
 async function buildProfile() {
   showError('');
-  const button = $('profile-btn');
-  button.disabled = true;
-  button.textContent = 'Собираю профиль…';
-  $('profile-status').textContent = 'Это займёт около минуты.';
   try {
-    const result = await json(`/api/interviews/${ctx.id}/profile`, { method: 'POST' });
-    $('profile-text').value = result.profile;
-    $('profile-status').textContent = 'Профиль собран и сохранён. Проверьте факты и цифры.';
+    applyProfileStatus(await json(`/api/interviews/${ctx.id}/profile`, { method: 'POST' }));
+    if (ctx.profileRunning) startProfilePolling();
   } catch (error) {
     showError(error.message);
-    $('profile-status').textContent = '';
   }
-  button.textContent = 'Собрать профиль из резюме и кейсов';
-  renderSlots();
 }
 
 async function saveProfile() {
@@ -251,6 +294,7 @@ async function approveQuestions() {
 // ---------- вход на экран ----------
 
 export async function openPrepare(interviewId) {
+  stopProfilePolling();
   showScreen('prepare');
   try {
     const details = await json(`/api/interviews/${interviewId}`);
@@ -261,12 +305,20 @@ export async function openPrepare(interviewId) {
       approvedCount: details.questions ? details.questions.length : 0,
       dirty: false,
       paste: {},
+      profileRunning: false,
     };
     $('prepare-title').textContent = details.interview.title;
     $('profile-text').value = details.profile || '';
     $('profile-status').textContent = '';
+    $('profile-progress').hidden = true;
     renderSlots();
     renderEditor();
+    // сборка могла быть запущена до перезагрузки страницы: подхватываем ход
+    const status = await json(`/api/interviews/${interviewId}/profile/status`);
+    if (status.state === 'running') {
+      applyProfileStatus(status);
+      startProfilePolling();
+    }
   } catch (error) {
     showError(error.message);
   }

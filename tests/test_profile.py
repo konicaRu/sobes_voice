@@ -1,4 +1,12 @@
-from app.profile import MAX_PROFILE_CHARS, MAX_SOURCE_CHARS, ProfileDraft, build_profile, build_profile_messages
+from app.profile import (
+    EXPECTED_PROFILE_CHARS,
+    MAX_PROFILE_CHARS,
+    MAX_SOURCE_CHARS,
+    ProfileDraft,
+    build_profile,
+    build_profile_messages,
+    profile_percent,
+)
 
 
 class FakeLlm:
@@ -9,6 +17,20 @@ class FakeLlm:
     def chat_json(self, messages, model_cls, **kwargs):
         self.calls.append((messages, model_cls, kwargs))
         return ProfileDraft(profile=self.text)
+
+
+def test_profile_percent_grows_with_written_text_and_is_capped_below_100():
+    assert profile_percent(0) == 10
+    assert profile_percent(EXPECTED_PROFILE_CHARS // 2) < profile_percent(EXPECTED_PROFILE_CHARS)
+    assert profile_percent(EXPECTED_PROFILE_CHARS) <= 95
+    assert profile_percent(EXPECTED_PROFILE_CHARS * 10) == 95
+
+
+def test_build_profile_passes_progress_callback_to_llm():
+    llm = FakeLlm("профиль")
+    callback = lambda chars: None  # noqa: E731
+    build_profile(llm, ["Резюме"], [], on_progress=callback)
+    assert llm.calls[0][2]["on_progress"] is callback
 
 
 def test_messages_label_resume_and_cases():

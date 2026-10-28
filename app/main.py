@@ -1,3 +1,4 @@
+import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -11,7 +12,7 @@ from app.config import ROOT, load_config, load_glossary
 from app.documents import MAX_UPLOAD_BYTES, DocumentError, extract_text, safe_filename
 from app.llm import LlmError, build_llm
 from app.models import MAX_QUESTIONS, SLOTS, Attempt, Question
-from app.profile import MAX_PROFILE_CHARS, build_profile
+from app.profile import MAX_PROFILE_CHARS, build_profile, profile_percent
 from app.questions import merge_questions, parse_questions
 from app.review import MAX_VACANCY_CHARS, review_answer
 from app.storage import NotFoundError, Storage, StorageError
@@ -95,6 +96,7 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
 
     app = FastAPI(title="Interview Trainer", lifespan=lifespan)
     app.state.stt, app.state.tts, app.state.llm = stt, tts, llm
+    profile_jobs: dict[str, dict] = {}  # фоновая сборка профиля по собеседованиям
 
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
@@ -179,8 +181,33 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             "profile": storage.load_profile(interview_id),
         }
 
+    def profile_status(interview_id: str) -> dict:
+        job = profile_jobs.get(interview_id)
+        if job is None:
+            return {"state": "idle", "percent": 0, "message": "", "elapsed": 0}
+        finished = job.get("finished") or time.time()
+        return {**{k: v for k, v in job.items() if k not in ("started", "finished")}, "elapsed": round(finished - job["started"])}
+
+    def run_profile_job(interview_id: str, resumes: list[str], cases: list[str]) -> None:
+        job = profile_jobs[interview_id]
+
+        def progress(written: int) -> None:
+            job.update(percent=profile_percent(written), message="Модель пишет профиль…")
+
+        try:
+            profile = build_profile(app.state.llm, resumes, cases, on_progress=progress)
+            storage.save_profile(interview_id, profile)
+            job.update(state="done", percent=100, message="Профиль собран и сохранён.", profile=profile)
+        except Exception as exc:
+            message = str(exc) if isinstance(exc, LlmError) else "Не удалось собрать профиль."
+            job.update(state="error", message=message)
+        job["finished"] = time.time()
+
     @app.post("/api/interviews/{interview_id}/profile")
     def create_profile(interview_id: str):
+        """Запускает сборку профиля в фоне; ход виден через GET .../profile/status."""
+        if profile_jobs.get(interview_id, {}).get("state") == "running":
+            return profile_status(interview_id)
         documents = storage.list_documents(interview_id)
         texts = {
             slot: [extract_text(name, storage.read_document(interview_id, slot, name)) for name in documents[slot]]
@@ -188,9 +215,18 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
         }
         if not texts["resume"] and not texts["cases"]:
             raise HTTPException(409, "Сначала загрузите резюме или кейсы.")
-        profile = build_profile(app.state.llm, texts["resume"], texts["cases"])
-        storage.save_profile(interview_id, profile)
-        return {"profile": profile}
+        profile_jobs[interview_id] = {
+            "state": "running", "percent": 10, "message": "Модель читает документы…", "started": time.time(),
+        }
+        threading.Thread(
+            target=run_profile_job, args=(interview_id, texts["resume"], texts["cases"]), daemon=True
+        ).start()
+        return profile_status(interview_id)
+
+    @app.get("/api/interviews/{interview_id}/profile/status")
+    def get_profile_status(interview_id: str):
+        storage.get_interview(interview_id)
+        return profile_status(interview_id)
 
     @app.put("/api/interviews/{interview_id}/profile")
     def save_profile(interview_id: str, body: ProfileRequest):
