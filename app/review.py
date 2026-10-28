@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.llm import LlmError
 from app.models import Question
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "review.md"
@@ -17,6 +18,9 @@ MAX_VACANCY_CHARS = 1500
 MIN_QUOTE_OVERLAP = 0.7  # доля слов цитаты, которые должны реально встречаться в расшифровке
 MISSING_MARKERS = {"", "нет", "отсутствует", "не сказано", "не упомянуто"}
 ALL_COVERED_SUMMARY = {5: "Отличный ответ. Все ключевые пункты раскрыты.", 4: "Хороший ответ. Все ключевые пункты раскрыты."}
+OFF_TOPIC_SUMMARY = "Ответ нужно переделать: вы ответили не на тот вопрос."
+# придирки к ошибкам распознавания («неправильный термин X вместо Y») модель пишет, несмотря на запрет в промпте
+RECOGNITION_NITPICK = re.compile(r"термин\w*[^.]*вместо|распознав|транскрипц", re.IGNORECASE)
 WORD = re.compile(r"[a-zа-яё0-9]+")
 
 
@@ -62,9 +66,13 @@ def quote_supported(quote: str, transcript: str) -> bool:
 
 
 class ReviewDraft(BaseModel):
-    """То, что возвращает модель (схема для structured output). Порядок полей важен: coverage идёт
-    первым, и замечания модель пишет уже после того, как процитировала ответ по каждому пункту."""
+    """То, что возвращает модель (схема для structured output). Порядок полей важен: сначала модель
+    формулирует, о чём вопрос и о чём ответ, и решает, по теме ли он; потом coverage с цитатами, и только
+    после этого оценка и замечания."""
 
+    question_topic: str
+    answer_topic: str
+    on_topic: Literal["да", "частично", "нет"]
     coverage: list[PointCheck]
     score: int = Field(ge=1, le=5)
     strengths: list[str]
@@ -143,6 +151,34 @@ def _ceiling(total: int, missing: int) -> int:
     return 3 if missing * 3 >= total else 4
 
 
+class TopicCheck(BaseModel):
+    same_topic: Literal["да", "нет"]
+
+
+TOPIC_PROMPT = (
+    "Сравни тему вопроса собеседования и тему ответа кандидата. Оценивай только тему, а не качество ответа.\n"
+    "Ответь «да», если ответ посвящён тому, о чём спрашивали, пусть неполный или с ошибками.\n"
+    "Ответь «нет», если кандидат говорит о другом: например, спрашивали про решение или выбор, "
+    "а он объясняет устройство метода или инструмента.\n"
+    "Верни JSON с одним полем same_topic: «да» или «нет»."
+)
+
+
+def _same_topic(llm, question: Question, draft: ReviewDraft) -> bool:
+    """Арбитр для неуверенного «частично»: короткая отдельная проверка надёжнее, чем решение внутри большого разбора."""
+    messages = [
+        {"role": "system", "content": TOPIC_PROMPT},
+        {
+            "role": "user",
+            "content": f"Вопрос: {question.text}\nТема вопроса: {draft.question_topic}\nТема ответа: {draft.answer_topic}",
+        },
+    ]
+    try:
+        return llm.chat_json(messages, TopicCheck, temperature=0.0).same_topic == "да"
+    except LlmError:
+        return True  # не получилось проверить: не наказываем кандидата
+
+
 def review_answer(
     llm,
     question: Question,
@@ -156,15 +192,30 @@ def review_answer(
     draft = llm.chat_json(messages, ReviewDraft, temperature=REVIEW_TEMPERATURE)
     fields = draft.model_dump()
 
+    off_topic = draft.on_topic == "нет" or (draft.on_topic == "частично" and not _same_topic(llm, question, draft))
+    if off_topic:  # ответ про другое: оценка и текст формульные, модель тут легко ошибается в сторону мягкости
+        fields.update(
+            score=1,
+            issues=[f"Ответ не по теме: вопрос про «{draft.question_topic}», а вы говорили про «{draft.answer_topic}»."],
+            how_to_fix=[f"Ответьте на заданный вопрос: {draft.question_topic}."],
+            spoken_summary=OFF_TOPIC_SUMMARY,
+        )
+        return ReviewResult(verdict="redo", **fields)
+
     missing = [p.point for p in draft.coverage if not quote_supported(p.quote, transcript)]
     score = min(draft.score, _ceiling(len(draft.coverage), len(missing)))
-    issues, fixes, summary = draft.issues, draft.how_to_fix, draft.spoken_summary
+    issues = [text for text in draft.issues if not RECOGNITION_NITPICK.search(text)]
+    fixes = [text for text in draft.how_to_fix if not RECOGNITION_NITPICK.search(text)]
+    summary = draft.spoken_summary
     if missing and not issues:
         issues = [f"Не раскрыт пункт: {point}" for point in missing][:MAX_ITEMS]
     if missing and not fixes:
         fixes = [f"Раскройте пункт: {point}" for point in missing][:MAX_ITEMS]
     if score < 4 <= draft.score:
-        summary = f"Неплохо, но стоит доработать. Не раскрыт пункт: {missing[0]}."
+        if score <= 2:
+            summary = "Ответ нужно переделать: он лишь отчасти отвечает на вопрос."
+        else:
+            summary = f"Неплохо, но стоит доработать. Не раскрыт пункт: {missing[0]}."
 
     if score >= 4:
         if draft.coverage and not missing:

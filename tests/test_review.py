@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from app.llm import LlmError
 from app.models import Question
 from app.review import (
     MAX_ITEMS,
@@ -8,6 +9,7 @@ from app.review import (
     REVIEW_TEMPERATURE,
     PointCheck,
     ReviewDraft,
+    TopicCheck,
     build_messages,
     quote_supported,
     review_answer,
@@ -32,17 +34,23 @@ WITH_MISSING = [*COVERED, PointCheck(point="MDE", quote="нет")]
 
 
 class FakeLlm:
-    def __init__(self, result):
+    def __init__(self, result, same_topic: "str | Exception" = "да"):
         self.result = result
+        self.same_topic = same_topic  # ответ арбитра темы; исключение будет брошено
         self.calls = []
 
     def chat_json(self, messages, model_cls, **kwargs):
         self.calls.append((messages, model_cls, kwargs))
+        if model_cls is TopicCheck:
+            if isinstance(self.same_topic, Exception):
+                raise self.same_topic
+            return TopicCheck(same_topic="да" if self.same_topic == "да" else "нет")
         return self.result
 
 
 def make_draft(**overrides) -> ReviewDraft:
     data: dict = dict(
+        question_topic="проверка результатов A/B-теста", answer_topic="проверка результатов A/B-теста", on_topic="да",
         coverage=COVERED, score=3, strengths=["есть p-value"], issues=["нет размера выборки"],
         how_to_fix=["назвать MDE"], improved_outline="1. гипотеза 2. метрика", spoken_summary="Нужно больше конкретики.",
     )
@@ -121,6 +129,90 @@ def test_verdict_is_derived_from_score(score, verdict):
     result = review(make_draft(score=score, issues=["замечание"], how_to_fix=["совет"]))
     assert result.verdict == verdict
     assert result.score == score
+
+
+# ---------- ответ не по теме ----------
+
+def test_off_topic_answer_gets_one_point_with_formulaic_feedback():
+    draft = make_draft(
+        score=3, on_topic="нет", question_topic="масштабирование пилота AI", answer_topic="механика A/B-теста",
+        issues=["придирка"], how_to_fix=["совет"], spoken_summary="Хороший ответ.",
+    )
+    result = review(draft)
+    assert result.score == 1 and result.verdict == "redo"
+    assert result.issues == ["Ответ не по теме: вопрос про «масштабирование пилота AI», а вы говорили про «механика A/B-теста»."]
+    assert result.how_to_fix == ["Ответьте на заданный вопрос: масштабирование пилота AI."]
+    assert result.spoken_summary == "Ответ нужно переделать: вы ответили не на тот вопрос."
+
+
+def partly(**overrides):
+    return make_draft(
+        on_topic="частично", question_topic="масштабирование пилота AI", answer_topic="механика A/B-теста", **overrides
+    )
+
+
+def test_partly_on_topic_is_arbitrated_and_different_topics_mean_off_topic():
+    llm = FakeLlm(partly(score=3), same_topic="нет")
+    result = review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)
+    assert result.score == 1 and result.verdict == "redo"
+    assert result.spoken_summary == "Ответ нужно переделать: вы ответили не на тот вопрос."
+    assert "масштабирование пилота AI" in result.issues[0] and "механика A/B-теста" in result.issues[0]
+
+
+def test_arbiter_receives_question_and_both_topics():
+    llm = FakeLlm(partly(score=3), same_topic="нет")
+    review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)
+    topic_calls = [c for c in llm.calls if c[1] is TopicCheck]
+    assert len(topic_calls) == 1
+    user = topic_calls[0][0][1]["content"]
+    assert QUESTION.text in user and "масштабирование пилота AI" in user and "механика A/B-теста" in user
+    assert topic_calls[0][2]["temperature"] == 0.0
+
+
+def test_partly_on_topic_with_same_topic_verdict_changes_nothing():
+    llm = FakeLlm(partly(score=3), same_topic="да")
+    result = review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)
+    assert result.score == 3 and result.verdict == "improve"
+    assert result.issues == ["нет размера выборки"]
+
+
+@pytest.mark.parametrize("on_topic", ["да", "нет"])
+def test_arbiter_is_only_called_for_uncertain_topic(on_topic):
+    llm = FakeLlm(make_draft(on_topic=on_topic), same_topic="да")
+    review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)
+    assert not [c for c in llm.calls if c[1] is TopicCheck]
+
+
+def test_arbiter_failure_does_not_break_the_review():
+    llm = FakeLlm(partly(score=3), same_topic=LlmError("LM Studio не отвечает."))
+    result = review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)
+    assert result.score == 3
+
+
+def test_on_topic_answer_is_not_affected_by_topic_check():
+    assert review(make_draft(score=3, on_topic="да")).score == 3
+
+
+def test_on_topic_must_be_one_of_three_values():
+    with pytest.raises(ValidationError):
+        make_draft(on_topic="возможно")
+
+
+# ---------- придирки к ошибкам распознавания ----------
+
+@pytest.mark.parametrize(
+    "nitpick",
+    [
+        "Неправильное использование термина 'Амба-тест' вместо A/B-тест.",
+        "Ошибка распознавания слова «пивали».",
+        "В транскрипции неверно написан термин SRM.",
+    ],
+)
+def test_complaints_about_recognition_errors_are_dropped(nitpick):
+    draft = make_draft(score=3, issues=[nitpick, "нет размера выборки"], how_to_fix=[nitpick, "назвать MDE"])
+    result = review(draft)
+    assert result.issues == ["нет размера выборки"]
+    assert result.how_to_fix == ["назвать MDE"]
 
 
 # ---------- проверка цитат ----------

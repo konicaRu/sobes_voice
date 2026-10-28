@@ -68,11 +68,15 @@ def main() -> int:
                 "acceptable": case.get("acceptable", [case["expected"]]),
                 "seconds": round(time.perf_counter() - started, 1), "issues": result.issues, "strengths": result.strengths,
                 "how_to_fix": result.how_to_fix, "spoken_summary": result.spoken_summary, "note": case["note"],
-                "coverage": [point.model_dump() for point in result.coverage],
+                "coverage": [point.model_dump() for point in result.coverage], "on_topic": result.on_topic,
+                "question_topic": result.question_topic, "answer_topic": result.answer_topic,
             })
             row = rows[-1]
             mark = "OK " if row["expected"] == row["got"] else ("ок~" if row["got"] in row["acceptable"] else "ERR")
-            print(f"{mark} {row['id']:<20} ждали {row['expected']:<8} получили {row['got']:<8} оценка {row['score']} {row['seconds']:>5} с")
+            print(
+                f"{mark} {row['id']:<20} ждали {row['expected']:<8} получили {row['got']:<8} оценка {row['score']} "
+                f"{row['seconds']:>5} с  по теме: {row['on_topic']}"
+            )
 
     matches = sum(r["expected"] == r["got"] for r in rows)
     lenient = sum(r["got"] in r["acceptable"] for r in rows)
@@ -96,6 +100,7 @@ def main() -> int:
     for r in rows:
         lines += [
             f"## {r['id']} (ждали {r['expected']}, получили {r['got']}, оценка {r['score']}, {r['seconds']} с): {r['note']}",
+            f"Тема вопроса: {r['question_topic']}; тема ответа: {r['answer_topic']}; по теме: {r['on_topic']}",
             "Пункты: " + "; ".join(f"{c['point']} → «{c['quote']}»" for c in r["coverage"]),
             "Сильные стороны: " + "; ".join(r["strengths"]),
             "Замечания: " + "; ".join(r["issues"]),

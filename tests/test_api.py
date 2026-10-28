@@ -13,6 +13,7 @@ from app.storage import Storage
 from app.stt import AudioError, Transcription
 
 RESULT = ReviewDraft(
+    question_topic="цифры результата", answer_topic="цифры результата", on_topic="да",
     coverage=[PointCheck(point="цифры", quote="нет")], score=3, strengths=["есть пример"], issues=["нет цифр"],
     how_to_fix=["назвать цифры"], improved_outline="1. контекст 2. цифры", spoken_summary="Добавьте цифры.",
 )

@@ -18,3 +18,11 @@ def test_load_glossary_returns_both_tables():
     glossary = load_glossary(ROOT / "glossary.yaml")
     assert glossary.tts["ClickHouse"] == "кликхаус"
     assert glossary.stt_fix["клик хаус"] == "ClickHouse"
+
+
+def test_glossary_fixes_real_a_b_misrecognitions():
+    from app.text_norm import apply_stt_fixes
+
+    fixes = load_glossary(ROOT / "glossary.yaml").stt_fix
+    assert apply_stt_fixes("Амба-тест проводится для того", fixes) == "A/B-тест проводится для того"
+    assert apply_stt_fixes("запускали амба тест на группе", fixes) == "запускали A/B-тест на группе"
