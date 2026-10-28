@@ -1,0 +1,24 @@
+# личные данные (резюме, кейсы, записи, отчёты, логи)
+data/
+
+# окружение и кэши
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# модели и артефакты
+models/
+*.onnx
+*.pt
+
+# локальные настройки Claude Code и временные файлы
+.claude/settings.local.json
+.commitmsg.tmp
+.codegraph/
+
+# IDE / ОС
+.vscode/
+.idea/
+Thumbs.db
