@@ -117,6 +117,78 @@ def test_windows_line_endings_and_tabs():
     assert questions[0].what_to_check == ["проверка пропорций"]
 
 
+STUDY_NOTES = """# Подготовка к собеседованию
+
+Что внутри:
+- термины простыми словами
+- схема RAG
+
+## Термины
+1. Токен — кусочек текста.
+2. TTFT — время до первого токена.
+
+```
+6. БИЗНЕС   что это даёт
+5. ПОЛЬЗОВАТЕЛИ   довольны ли люди
+```
+
+| Метрика | Что показывает? |
+|---|---|
+| TTFT | задержку |
+
+# Часть 2. Вопросы
+
+### 1. Как понять, что офис приносит пользу?
+
+**Коротко:**
+> Смотрю на три уровня.
+
+- первый пункт пояснения
+- второй пункт пояснения
+
+### 2. Масштабировать ли пилот на всю компанию?
+Критерии: контрольная группа; стоимость масштаба
+
+### 2а. Как мерить RAG целиком? Лестница метрик
+
+Критерии:
+- инфраструктура
+- поиск
+
+### 3. Почему AI и почему к нам?
+
+## Твои вопросы директору
+1. **«Как вы показываете пользу правлению?»** Самый сильный вопрос.
+"""
+
+
+def test_many_question_headings_make_headings_the_only_questions():
+    questions = parse_questions(STUDY_NOTES)
+    assert texts(questions) == [
+        "Как понять, что офис приносит пользу?",
+        "Масштабировать ли пилот на всю компанию?",
+        "Как мерить RAG целиком?",
+        "Почему AI и почему к нам?",
+    ]
+
+
+def test_heading_mode_keeps_only_explicit_criteria():
+    questions = parse_questions(STUDY_NOTES)
+    assert questions[0].what_to_check == []  # пояснительные пункты под заголовком не критерии
+    assert questions[1].what_to_check == ["контрольная группа", "стоимость масштаба"]
+    assert questions[2].what_to_check == ["инфраструктура", "поиск"]
+
+
+def test_fenced_code_blocks_and_table_rows_are_not_questions():
+    text = "1. Что такое SRM?\n```\n2. Это схема в блоке кода\n```\n| колонка | вопрос? |\n3. Что такое MDE?"
+    assert texts(parse_questions(text)) == ["Что такое SRM?", "Что такое MDE?"]
+
+
+def test_heading_number_prefix_is_removed_in_list_mode_too():
+    questions = parse_questions("## 1. Что такое SRM?\n## 2а) Что такое MDE?")
+    assert texts(questions) == ["Что такое SRM?", "Что такое MDE?"]
+
+
 def test_merge_questions_dedupes_across_files_and_renumbers():
     first = [Question(id="q01", text="Что такое SRM?"), Question(id="q02", text="Что такое MDE?")]
     second = [Question(id="q01", text="что такое srm?"), Question(id="q02", text="Что такое CUPED?")]

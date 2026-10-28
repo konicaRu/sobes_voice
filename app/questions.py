@@ -1,13 +1,15 @@
 """Разбор списка вопросов из текста (md/txt/docx/pdf после extract_text).
 
 Что считается вопросом:
-- пункт списка (нумерованного или маркированного);
-- заголовок `#` с вопросительным знаком;
-- строка с «?», если в документе нет списков;
+- если в документе три и больше заголовков с «?» (конспект: вопросы заголовками, вокруг пояснения),
+  вопросы только эти заголовки, а списки и абзацы вокруг не трогаем;
+- иначе пункт списка (нумерованного или маркированного), заголовок с «?»,
+  строка с «?», если в документе нет списков;
 - если ничего не нашлось, заголовки `##` и глубже.
+Блоки кода и строки таблиц игнорируются, номер в начале заголовка («1.», «2а)») убирается.
 
-Критерии (what_to_check): строка «Критерии: a; b», вложенные пункты под вопросом, маркированные пункты
-под нумерованным вопросом и строки после «Критерии:» без текста.
+Критерии (what_to_check): строка «Критерии: a; b», строки после «Критерии:» без текста, а вне режима
+заголовков ещё вложенные пункты под вопросом и маркированные пункты под нумерованным вопросом.
 """
 import re
 from dataclasses import dataclass, field
@@ -23,7 +25,10 @@ LABEL = re.compile(
     re.IGNORECASE,
 )
 WHOLE_LINE_BOLD = re.compile(r"^(\s*)\*\*(.+?)\*\*\s*$")
+CODE_FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.MULTILINE | re.DOTALL)
+HEADING_NUMBER = re.compile(r"^\d+[а-яa-z]?[.)]\s+", re.IGNORECASE)
 MIN_QUESTION_CHARS = 3
+MIN_QUESTION_HEADINGS = 3
 
 
 @dataclass
@@ -38,9 +43,20 @@ def _clean(text: str) -> str:
     return text.replace("**", "").strip(" *_\t")
 
 
+def _heading_question(title: str) -> str:
+    """Убирает номер в начале и подзаголовок после последнего «?»."""
+    title = HEADING_NUMBER.sub("", title)
+    if "?" in title and not title.endswith("?"):
+        title = title[: title.rindex("?") + 1]
+    return title
+
+
 def parse_questions(text: str, category: str = "general") -> list[Question]:
-    lines = [WHOLE_LINE_BOLD.sub(r"\1\2", line) for line in text.replace("\r\n", "\n").expandtabs(4).split("\n")]
+    text = CODE_FENCE.sub("", text.replace("\r\n", "\n"))
+    lines = [WHOLE_LINE_BOLD.sub(r"\1\2", line) for line in text.expandtabs(4).split("\n")]
     has_list = any(LIST_ITEM.match(line) and not LABEL.match(line) for line in lines)
+    question_headings = sum(1 for line in lines if (h := HEADING.match(line)) and "?" in h[2])
+    heading_mode = question_headings >= MIN_QUESTION_HEADINGS
 
     candidates: list[_Candidate] = []
     deep_headings: list[str] = []
@@ -48,7 +64,7 @@ def parse_questions(text: str, category: str = "general") -> list[Question]:
     criteria_mode = False
 
     for line in lines:
-        if not line.strip():
+        if not line.strip() or line.lstrip().startswith("|"):
             continue
 
         label = LABEL.match(line)
@@ -62,10 +78,10 @@ def parse_questions(text: str, category: str = "general") -> list[Question]:
         heading = HEADING.match(line)
         if heading:
             criteria_mode = False
-            title = _clean(heading[2])
+            title = _heading_question(_clean(heading[2]))
             if len(heading[1]) >= 2:
                 deep_headings.append(title)
-            if title.endswith("?"):
+            if "?" in title:
                 current = _Candidate(title, "heading", -1)
                 candidates.append(current)
             else:
@@ -76,6 +92,10 @@ def parse_questions(text: str, category: str = "general") -> list[Question]:
         if item:
             indent, kind = len(item[1]), "num" if item[2][0].isdigit() else "bullet"
             body = _clean(item[3])
+            if heading_mode:  # пункты вокруг заголовков-вопросов — пояснения; берём только после «Критерии:»
+                if criteria_mode and current is not None:
+                    current.criteria.append(body)
+                continue
             is_child = current is not None and (
                 indent > current.indent or (current.kind == "num" and kind == "bullet" and indent >= current.indent)
             )
@@ -89,7 +109,7 @@ def parse_questions(text: str, category: str = "general") -> list[Question]:
 
         if criteria_mode and current is not None:
             current.criteria.append(_clean(line))
-        elif not has_list and "?" in line:
+        elif not heading_mode and not has_list and "?" in line:
             current = _Candidate(_clean(line), "plain", len(line) - len(line.lstrip()))
             candidates.append(current)
 
