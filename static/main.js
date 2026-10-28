@@ -65,5 +65,10 @@ initHistory({
   onOpenReport: openReport,
 });
 
+// пока страница открыта, сервер знает, что он нужен; после закрытия вкладки он сам завершится
+const ping = () => fetch('/api/ping', { method: 'POST' }).catch(() => {});
+ping();
+setInterval(ping, 15000);
+
 showHome();
 refreshStatus();

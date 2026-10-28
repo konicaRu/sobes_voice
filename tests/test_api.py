@@ -705,3 +705,15 @@ def test_transcribe_audio_error_is_422_with_message(make_client):
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
     assert response.status_code == 422
     assert response.json()["detail"] == "Неподдерживаемая частота записи."
+
+
+def test_delete_interview_removes_it_from_list(make_client):
+    client = make_client()
+    keep, drop = new_interview(client, "Оставить"), new_interview(client, "Удалить")
+    assert client.delete(f"/api/interviews/{drop['id']}").status_code == 204
+    assert [i["id"] for i in client.get("/api/interviews").json()] == [keep["id"]]
+    assert client.get(f"/api/interviews/{drop['id']}").status_code == 404
+
+
+def test_delete_unknown_interview_is_404(make_client):
+    assert make_client().delete("/api/interviews/nope").status_code == 404

@@ -1,4 +1,4 @@
-server: { host: 127.0.0.1, port: 8000 }
+server: { host: 127.0.0.1, port: 8000, stop_when_closed: true, idle_timeout_s: 150 }  # stop_when_closed: сервер сам завершается, когда страницу закрыли
 lmstudio:
   base_url: http://localhost:1234/v1
   model: auto            # auto = первая загруженная модель из /v1/models

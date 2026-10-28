@@ -188,3 +188,18 @@ def test_audio_is_saved_next_to_the_session(storage):
     relative = storage.save_audio(session, q=1, n=2, wav=b"RIFFdata")
     assert relative == "audio/q02_a2.wav"
     assert storage.audio_path(session, relative).read_bytes() == b"RIFFdata"
+
+
+def test_delete_interview_removes_its_folder_and_only_it(storage):
+    first, second = make_interview(storage, "Первое"), make_interview(storage, "Второе")
+    storage.save_questions(first.id, [Question(id="q01", text="Вопрос?")])
+    storage.delete_interview(first.id)
+    assert [i.id for i in storage.list_interviews()] == [second.id]
+    with pytest.raises(NotFoundError):
+        storage.get_interview(first.id)
+
+
+@pytest.mark.parametrize("bad_id", ["../x", "nope", "", "a/b", "..\\x"])
+def test_delete_unknown_or_malicious_interview_is_not_found(storage, bad_id):
+    with pytest.raises(NotFoundError):
+        storage.delete_interview(bad_id)

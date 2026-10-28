@@ -1,3 +1,4 @@
+import os
 import random
 import time
 from contextlib import asynccontextmanager
@@ -42,6 +43,7 @@ from app.settings import (
 from app.storage import NotFoundError, Storage, StorageError
 from app.stt import AudioError, build_stt
 from app.tts import build_tts
+from app.watchdog import Heartbeat, start_watchdog
 
 STATIC_DIR = ROOT / "static"
 MAX_TTS_CHARS = 2000
@@ -134,10 +136,13 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             app.state.tts = build_tts(config, glossary, ROOT / config.paths.data_dir / "cache" / "tts")
         if app.state.llm is None:
             app.state.llm = build_llm(config)
+        if config.server.stop_when_closed:
+            start_watchdog(app.state.heartbeat, config.server.idle_timeout_s, on_idle=lambda: os._exit(0))
         yield
 
     app = FastAPI(title="Interview Trainer", lifespan=lifespan)
     app.state.stt, app.state.tts, app.state.llm = stt, tts, llm
+    app.state.heartbeat = Heartbeat()
     jobs = JobTracker()  # фоновые задачи: сборка профиля, генерация вопросов
 
     @app.exception_handler(LlmError)
@@ -189,6 +194,10 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             "tts": {"ok": app.state.tts is not None},
         }
 
+    @app.post("/api/ping", status_code=204)
+    def ping():
+        app.state.heartbeat.ping()
+
     @app.post("/api/tts")
     def tts_endpoint(body: TtsRequest):
         try:
@@ -239,6 +248,10 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     @app.post("/api/interviews")
     def create_interview(body: InterviewRequest):
         return storage.create_interview(body.title)
+
+    @app.delete("/api/interviews/{interview_id}", status_code=204)
+    def delete_interview(interview_id: str):
+        storage.delete_interview(interview_id)
 
     @app.get("/api/interviews/{interview_id}")
     def get_interview(interview_id: str):

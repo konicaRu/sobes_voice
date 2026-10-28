@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -69,6 +70,10 @@ class Storage:
     def get_interview(self, interview_id: str) -> Interview:
         path = self._interview_dir(interview_id) / "interview.json"
         return Interview.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def delete_interview(self, interview_id: str) -> None:
+        """Удаляет собеседование целиком: документы, вопросы, профиль, сессии и записи."""
+        shutil.rmtree(self._interview_dir(interview_id))
 
     def list_interviews(self) -> list[Interview]:
         if not self.root.is_dir():

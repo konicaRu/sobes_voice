@@ -1,4 +1,4 @@
-import { $, element, json, jsonRequest, showError, showScreen } from './ui.js';
+import { $, api, element, json, jsonRequest, showError, showScreen } from './ui.js';
 
 let openInterview = () => {};
 
@@ -14,9 +14,24 @@ function renderList(interviews) {
     info.append(element('div', 'muted', `${new Date(item.created_at).toLocaleDateString('ru-RU')} · документов: ${docs} · ${questions}`));
     const open = element('button', 'primary', 'Открыть');
     open.addEventListener('click', () => openInterview(item.id));
-    row.append(info, open);
+    const remove = element('button', 'danger', 'Удалить');
+    remove.addEventListener('click', () => removeInterview(item));
+    const buttons = element('div', 'row compact');
+    buttons.append(remove, open);
+    row.append(info, buttons);
     return row;
   }));
+}
+
+async function removeInterview(item) {
+  const warning = `Удалить собеседование «${item.title}»?\n\nБудут стёрты документы, вопросы, профиль, записи ответов и отчёты. Это нельзя отменить.`;
+  if (!window.confirm(warning)) return;
+  try {
+    await api(`/api/interviews/${item.id}`, { method: 'DELETE' });
+    await showHome();
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 export async function showHome() {

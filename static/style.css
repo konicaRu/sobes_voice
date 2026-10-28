@@ -216,3 +216,5 @@ header #settings-open-btn { margin-left: auto; margin-right: 16px; }
 .field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 14px; }
 .field input[type="checkbox"] + * , .field label:has(input[type="checkbox"]) { color: inherit; }
 .field select { min-width: 260px; padding: 8px 10px; font: inherit; }
+button.danger { border-color: #d64545; color: #d64545; background: transparent; }
+button.danger:hover:not(:disabled) { background: #d64545; color: #fff; }

@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parent.parent
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
+    stop_when_closed: bool = True  # сервер завершается, когда страницу закрыли
+    idle_timeout_s: int = 150
 
 
 class LmStudioConfig(BaseModel):
