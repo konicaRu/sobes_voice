@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тренажёр собеседований</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Тренажёр собеседований</h1>
+    <div id="status" class="status" title="Состояние LM Studio"></div>
+  </header>
+
+  <main>
+    <div id="error" class="error" hidden></div>
+
+    <section id="start-screen" class="card">
+      <p>Три вопроса для проверки голосового цикла. Нажмите «Начать»: интервьюер озвучит вопрос, затем вы отвечаете голосом.</p>
+      <button id="start-btn" class="primary">Начать</button>
+    </section>
+
+    <section id="interview" hidden>
+      <div class="progress" id="progress"></div>
+
+      <div class="card">
+        <div class="question-head">
+          <h2>Вопрос</h2>
+          <button id="repeat-btn" class="link">Повторить вопрос</button>
+        </div>
+        <p id="question-text" class="question-text"></p>
+        <button id="toggle-text-btn" class="link">Показать текст</button>
+      </div>
+
+      <div class="mic-area">
+        <button id="mic-btn" class="mic" disabled>Готов</button>
+        <div class="hint">Пробел — начать / остановить запись</div>
+      </div>
+
+      <div id="transcript-card" class="card" hidden>
+        <h2>Ваш ответ (расшифровка)</h2>
+        <p id="transcript"></p>
+      </div>
+
+      <div id="feedback-card" class="card" hidden>
+        <div class="feedback-head">
+          <span id="verdict" class="verdict"></span>
+          <span id="score" class="score"></span>
+        </div>
+        <div id="strengths-block"><h3>Сильные стороны</h3><ul id="strengths"></ul></div>
+        <div id="issues-block"><h3>Что не так</h3><ul id="issues"></ul></div>
+        <div id="fix-block"><h3>Как исправить</h3><ul id="how-to-fix"></ul></div>
+        <h3>Скелет сильного ответа</h3>
+        <p id="outline"></p>
+      </div>
+
+      <div class="actions">
+        <button id="retry-btn" disabled>Ответить ещё раз</button>
+        <button id="next-btn" class="primary" disabled>Следующий вопрос</button>
+      </div>
+
+      <div class="toggles">
+        <label><input type="checkbox" id="speak-feedback" checked> Озвучивать фидбек</label>
+      </div>
+    </section>
+
+    <section id="finish-screen" class="card" hidden>
+      <h2>Готово</h2>
+      <p>Вы прошли все вопросы. Итоговый отчёт появится на этапе 5.</p>
+      <button id="restart-btn" class="primary">Пройти заново</button>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
