@@ -153,11 +153,13 @@ class Storage:
             raise NotFoundError("Сессия не найдена.")
         return path
 
-    def create_session(self, interview_id: str) -> Session:
+    def create_session(self, interview_id: str, questions: list[Question] | None = None) -> Session:
+        """Сессия по утверждённому списку или по переданному подмножеству (режим «слабые»); вопросы копируются."""
         interview_dir = self._interview_dir(interview_id)
-        questions = self.load_questions(interview_id)
+        questions = questions if questions is not None else self.load_questions(interview_id)
         if not questions:
             raise StorageError("Утвердите список вопросов перед началом собеседования.")
+        questions = [q.model_copy(update={"id": f"q{n:02d}"}) for n, q in enumerate(questions, 1)]
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         candidate, counter = stamp, 1
         while (interview_dir / "sessions" / candidate).exists():
@@ -181,6 +183,26 @@ class Storage:
 
     def load_session(self, sid: str) -> Session:
         return Session.model_validate_json((self._session_dir(sid) / "session.json").read_text(encoding="utf-8"))
+
+    def list_sessions(self, interview_id: str) -> list[Session]:
+        folder = self._interview_dir(interview_id) / "sessions"
+        if not folder.is_dir():
+            return []
+        found = [
+            self.load_session(f"{interview_id}__{path.name}")
+            for path in folder.iterdir()
+            if (path / "session.json").is_file()
+        ]
+        return sorted(found, key=lambda s: s.started_at)
+
+    def save_report(self, sid: str, data: dict, markdown: str) -> None:
+        folder = self._session_dir(sid)
+        _write_json(folder / "report.json", json.dumps(data, ensure_ascii=False, indent=2))
+        _write_json(folder / "report.md", markdown)
+
+    def load_report(self, sid: str) -> dict | None:
+        path = self._session_dir(sid) / "report.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
     def save_audio(self, session: Session, q: int, n: int, wav: bytes) -> str:
         relative = f"audio/q{q + 1:02d}_a{n}.wav"

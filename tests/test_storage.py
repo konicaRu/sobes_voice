@@ -128,6 +128,47 @@ def test_session_snapshots_questions_and_survives_restart(tmp_path):
     assert loaded.interview_id == interview.id
 
 
+def test_session_can_be_created_from_a_subset_of_questions(storage):
+    interview = make_interview(storage)
+    storage.save_questions(interview.id, QUESTIONS)
+    session = storage.create_session(interview.id, questions=QUESTIONS[1:])
+    assert [q.text for q in session.questions] == ["Что такое MDE?"]
+    assert [q.id for q in session.questions] == ["q01"]  # id в сессии перенумерованы
+
+
+def test_skipped_and_finish_time_survive_restart(tmp_path):
+    storage = Storage(tmp_path)
+    interview = make_interview(storage)
+    storage.save_questions(interview.id, QUESTIONS)
+    session = storage.create_session(interview.id)
+    session.skipped = [1]
+    session.finished_at = "2026-10-28T11:00:00"
+    storage.save_session(session)
+    loaded = Storage(tmp_path).load_session(session.sid)
+    assert loaded.skipped == [1] and loaded.finished_at == "2026-10-28T11:00:00"
+
+
+def test_list_sessions_is_sorted_by_start_and_survives_restart(tmp_path):
+    storage = Storage(tmp_path)
+    interview = make_interview(storage)
+    storage.save_questions(interview.id, QUESTIONS)
+    first = storage.create_session(interview.id)
+    second = storage.create_session(interview.id)
+    assert [s.sid for s in Storage(tmp_path).list_sessions(interview.id)] == [first.sid, second.sid]
+    assert storage.list_sessions(make_interview(storage, "Другое").id) == []
+
+
+def test_report_is_saved_as_json_and_markdown_and_loaded_back(tmp_path):
+    storage = Storage(tmp_path)
+    interview = make_interview(storage)
+    storage.save_questions(interview.id, QUESTIONS)
+    session = storage.create_session(interview.id)
+    assert storage.load_report(session.sid) is None
+    storage.save_report(session.sid, {"summary": "Итог", "stats": {"average": 4.0}}, "# Отчёт\nИтог")
+    assert Storage(tmp_path).load_report(session.sid) == {"summary": "Итог", "stats": {"average": 4.0}}
+    assert (storage.root / interview.id / "sessions" / session.sid.split("__")[1] / "report.md").read_text(encoding="utf-8") == "# Отчёт\nИтог"
+
+
 def test_two_sessions_in_the_same_second_get_different_ids(storage):
     interview = make_interview(storage)
     storage.save_questions(interview.id, QUESTIONS)

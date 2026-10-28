@@ -1,7 +1,9 @@
+import { initHistory, showHistory } from './history.js';
 import { initHome, showHome } from './home.js';
 import { initInterview, startInterview } from './interview.js';
 import { initPrepare, openPrepare } from './prepare.js';
-import { $, json, showError } from './ui.js';
+import { finishSession, initReport, openReport } from './report.js';
+import { $, json, jsonRequest, showError } from './ui.js';
 
 let currentInterviewId = null;
 
@@ -10,13 +12,19 @@ async function openInterviewPrepare(interviewId) {
   await openPrepare(interviewId);
 }
 
-async function startSession(interviewId) {
+// mode: 'all' (весь утверждённый список) или 'weak' (только вопросы с вердиктом «доработать» или «переделать»)
+async function startSession(interviewId, mode = 'all') {
   currentInterviewId = interviewId;
   try {
-    await startInterview(await json(`/api/interviews/${interviewId}/sessions`, { method: 'POST' }));
+    await startInterview(await json(`/api/interviews/${interviewId}/sessions`, jsonRequest('POST', { mode })));
   } catch (error) {
     showError(error.message);
   }
+}
+
+async function openHistory(interviewId) {
+  currentInterviewId = interviewId;
+  await showHistory(interviewId);
 }
 
 async function refreshStatus() {
@@ -33,10 +41,25 @@ async function refreshStatus() {
 }
 
 initHome({ onOpen: openInterviewPrepare });
-initPrepare({ onBack: showHome, onStart: startSession });
+initPrepare({
+  onBack: showHome,
+  onStart: (id) => startSession(id),
+  onHistory: openHistory,
+  onWeak: (id) => startSession(id, 'weak'),
+});
 initInterview({
   onBack: () => openInterviewPrepare(currentInterviewId),
+  onFinish: finishSession,
+});
+initReport({
   onRestart: () => startSession(currentInterviewId),
+  onWeak: () => startSession(currentInterviewId, 'weak'),
+  onHistory: () => openHistory(currentInterviewId),
+  onBack: () => openInterviewPrepare(currentInterviewId),
+});
+initHistory({
+  onBack: () => openInterviewPrepare(currentInterviewId),
+  onOpenReport: openReport,
 });
 
 showHome();

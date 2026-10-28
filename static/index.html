@@ -90,65 +90,115 @@
       </div>
 
       <div class="actions">
+        <button id="history-open-btn">История сессий</button>
+        <button id="weak-start-btn">Тренировать слабые</button>
         <button id="start-btn" class="primary" disabled>Начать собеседование</button>
       </div>
     </section>
 
     <!-- Собеседование -->
     <section id="interview" hidden>
-      <div class="question-head">
-        <div class="progress" id="progress"></div>
-        <button id="back-btn" class="link">К подготовке</button>
-      </div>
+      <div class="interview-layout">
+        <aside class="sidebar">
+          <h2>Вопросы</h2>
+          <ol id="question-list" class="question-list"></ol>
+        </aside>
 
-      <div class="card">
-        <div class="question-head">
-          <h2>Вопрос</h2>
-          <button id="repeat-btn" class="link">Повторить вопрос</button>
+        <div class="interview-main">
+          <div class="question-head">
+            <div class="progress" id="progress"></div>
+            <div class="row compact">
+              <button id="finish-btn" class="link">Завершить и получить отчёт</button>
+              <button id="back-btn" class="link">К подготовке</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="question-head">
+              <h2>Вопрос</h2>
+              <button id="repeat-btn" class="link">Повторить вопрос</button>
+            </div>
+            <p id="question-text" class="question-text"></p>
+            <button id="toggle-text-btn" class="link">Показать текст</button>
+          </div>
+
+          <div class="mic-area">
+            <button id="mic-btn" class="mic" disabled>Готов</button>
+            <div class="hint">Пробел — начать / остановить запись</div>
+          </div>
+
+          <div id="transcript-card" class="card" hidden>
+            <h2>Ваш ответ (расшифровка)</h2>
+            <p id="transcript"></p>
+          </div>
+
+          <div id="feedback-card" class="card" hidden>
+            <div class="feedback-head">
+              <span id="verdict" class="verdict"></span>
+              <span id="score" class="score"></span>
+            </div>
+            <div id="strengths-block"><h3>Сильные стороны</h3><ul id="strengths"></ul></div>
+            <div id="issues-block"><h3>Что не так</h3><ul id="issues"></ul></div>
+            <div id="fix-block"><h3>Как исправить</h3><ul id="how-to-fix"></ul></div>
+            <h3>Скелет сильного ответа</h3>
+            <p id="outline"></p>
+          </div>
+
+          <div class="actions">
+            <button id="skip-btn" disabled>Пропустить</button>
+            <button id="retry-btn" disabled>Ответить ещё раз</button>
+            <button id="next-btn" class="primary" disabled>Следующий вопрос</button>
+          </div>
+
+          <div class="toggles">
+            <label><input type="checkbox" id="speak-feedback" checked> Озвучивать фидбек</label>
+          </div>
         </div>
-        <p id="question-text" class="question-text"></p>
-        <button id="toggle-text-btn" class="link">Показать текст</button>
-      </div>
-
-      <div class="mic-area">
-        <button id="mic-btn" class="mic" disabled>Готов</button>
-        <div class="hint">Пробел — начать / остановить запись</div>
-      </div>
-
-      <div id="transcript-card" class="card" hidden>
-        <h2>Ваш ответ (расшифровка)</h2>
-        <p id="transcript"></p>
-      </div>
-
-      <div id="feedback-card" class="card" hidden>
-        <div class="feedback-head">
-          <span id="verdict" class="verdict"></span>
-          <span id="score" class="score"></span>
-        </div>
-        <div id="strengths-block"><h3>Сильные стороны</h3><ul id="strengths"></ul></div>
-        <div id="issues-block"><h3>Что не так</h3><ul id="issues"></ul></div>
-        <div id="fix-block"><h3>Как исправить</h3><ul id="how-to-fix"></ul></div>
-        <h3>Скелет сильного ответа</h3>
-        <p id="outline"></p>
-      </div>
-
-      <div class="actions">
-        <button id="retry-btn" disabled>Ответить ещё раз</button>
-        <button id="next-btn" class="primary" disabled>Следующий вопрос</button>
-      </div>
-
-      <div class="toggles">
-        <label><input type="checkbox" id="speak-feedback" checked> Озвучивать фидбек</label>
       </div>
     </section>
 
-    <!-- Завершение -->
-    <section id="finish" class="card" hidden>
-      <h2>Готово</h2>
-      <p>Вы прошли все вопросы. Итоговый отчёт появится на этапе 5.</p>
+    <!-- Отчёт по сессии -->
+    <section id="finish" hidden>
+      <h2 class="page-title">Итоги собеседования</h2>
+      <div id="report-loading" class="card">
+        <p id="report-status" class="muted">Считаю итоги…</p>
+        <progress id="report-progress" max="100" value="10"></progress>
+      </div>
+      <div id="report-content" hidden>
+        <div class="card">
+          <h2>Итог</h2>
+          <div id="report-stats" class="stats"></div>
+          <p id="report-summary"></p>
+        </div>
+        <div class="card">
+          <h2>Результаты по вопросам</h2>
+          <table id="report-table" class="table"></table>
+        </div>
+        <div class="card"><h2>Слабые зоны</h2><ul id="report-weak"></ul></div>
+        <div class="card"><h2>Повторить</h2><ul id="report-repeat"></ul></div>
+        <div class="card"><h2>Рекомендации</h2><ul id="report-reco"></ul></div>
+      </div>
       <div class="row">
+        <button id="weak-btn">Тренировать слабые</button>
         <button id="restart-btn" class="primary">Пройти заново</button>
+        <button id="finish-history-btn">История сессий</button>
         <button id="finish-back-btn">К подготовке</button>
+      </div>
+    </section>
+
+    <!-- История сессий -->
+    <section id="history" hidden>
+      <button id="history-back-btn" class="link">← К подготовке</button>
+      <h2 class="page-title">История сессий</h2>
+      <div class="card">
+        <h2>Сессии</h2>
+        <p id="history-empty" class="muted" hidden>Пока нет ни одной сессии с ответами.</p>
+        <table id="history-sessions" class="table"></table>
+      </div>
+      <div class="card">
+        <h2>Динамика по вопросам</h2>
+        <p class="muted">Оценка каждого вопроса от сессии к сессии. Цвет показывает вердикт.</p>
+        <div id="history-matrix" class="matrix-wrap"></div>
       </div>
     </section>
   </main>

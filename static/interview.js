@@ -1,4 +1,4 @@
-import { $, api, json, showError, showScreen } from './ui.js';
+import { $, api, element, json, showError, showScreen, STATUS_LABELS } from './ui.js';
 
 const TARGET_RATE = 16000;
 const VERDICTS = { ok: 'Хорошо', improve: 'Доработать', redo: 'Переделать' };
@@ -6,6 +6,7 @@ const VERDICTS = { ok: 'Хорошо', improve: 'Доработать', redo: '�
 const state = {
   sid: null,
   questions: [],
+  statuses: [], // new | answered | ok | improve | redo | skipped
   index: 0,
   settings: { max_answer_seconds: 300 },
   phase: 'idle', // idle | speaking | recording | transcribing | reviewing | feedback-speaking
@@ -16,7 +17,30 @@ const state = {
   phaseTimer: null,
 };
 
-let callbacks = { onBack: () => {}, onRestart: () => {} };
+let callbacks = { onBack: () => {}, onFinish: async (_sid) => {} };
+
+const SHORT_TEXT_CHARS = 60;
+
+function renderSidebar() {
+  $('question-list').replaceChildren(...state.questions.map((question, index) => {
+    const status = state.statuses[index];
+    const button = element('button', `${status}${index === state.index ? ' current' : ''}`);
+    const short = question.text.length > SHORT_TEXT_CHARS ? `${question.text.slice(0, SHORT_TEXT_CHARS)}…` : question.text;
+    button.append(element('span', 'q-label', `${index + 1}. ${short}`), element('span', 'q-state', STATUS_LABELS[status]));
+    button.disabled = state.phase !== 'idle';
+    button.addEventListener('click', () => goTo(index));
+    const item = document.createElement('li');
+    item.append(button);
+    return item;
+  }));
+}
+
+async function goTo(index) {
+  if (state.phase !== 'idle' || index === state.index) return;
+  state.index = index;
+  renderQuestion();
+  await speakQuestion();
+}
 
 function fillList(id, items) {
   const list = $(id);
@@ -65,6 +89,9 @@ function setPhase(phase) {
   $('next-btn').disabled = !free || !answered;
   $('repeat-btn').disabled = !free;
   $('back-btn').disabled = !free;
+  $('skip-btn').disabled = !free;
+  $('finish-btn').disabled = !free;
+  renderSidebar();
 }
 
 function renderQuestion() {
@@ -76,6 +103,7 @@ function renderQuestion() {
   state.textVisible = false;
   applyTextVisibility();
   $('next-btn').textContent = state.index + 1 === state.questions.length ? 'Завершить' : 'Следующий вопрос';
+  renderSidebar();
 }
 
 function applyTextVisibility() {
@@ -225,6 +253,7 @@ async function processAnswer(wav) {
     $('transcript').textContent = transcription.text;
     $('transcript-card').hidden = false;
     $('feedback-card').hidden = true;
+    state.statuses[q] = 'answered';
 
     setPhase('reviewing');
     const review = await json(`/api/sessions/${state.sid}/review`, {
@@ -233,6 +262,7 @@ async function processAnswer(wav) {
       body: JSON.stringify({ q }),
     });
     renderFeedback(review);
+    state.statuses[q] = review.verdict;
 
     if ($('speak-feedback').checked) {
       setPhase('feedback-speaking');
@@ -252,7 +282,13 @@ function toggleRecording() {
 // ---------- навигация ----------
 
 export async function startInterview(session) {
-  Object.assign(state, { sid: session.sid, questions: session.questions, index: 0, settings: session.settings });
+  Object.assign(state, {
+    sid: session.sid,
+    questions: session.questions,
+    statuses: session.questions.map(() => 'new'),
+    index: 0,
+    settings: session.settings,
+  });
   $('speak-feedback').checked = session.settings.speak_feedback;
   showScreen('interview');
   renderQuestion();
@@ -261,7 +297,7 @@ export async function startInterview(session) {
 
 async function nextQuestion() {
   if (state.index + 1 >= state.questions.length) {
-    showScreen('finish');
+    await callbacks.onFinish(state.sid);
     return;
   }
   state.index += 1;
@@ -269,8 +305,24 @@ async function nextQuestion() {
   await speakQuestion();
 }
 
-export function initInterview({ onBack, onRestart }) {
-  callbacks = { onBack, onRestart };
+async function skipQuestion() {
+  showError('');
+  try {
+    await api(`/api/sessions/${state.sid}/skip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: state.index }),
+    });
+  } catch (error) {
+    showError(error.message);
+    return;
+  }
+  if (state.statuses[state.index] === 'new') state.statuses[state.index] = 'skipped';
+  await nextQuestion();
+}
+
+export function initInterview({ onBack, onFinish }) {
+  callbacks = { onBack, onFinish };
   $('mic-btn').addEventListener('click', toggleRecording);
   $('repeat-btn').addEventListener('click', speakQuestion);
   $('retry-btn').addEventListener('click', () => {
@@ -281,8 +333,8 @@ export function initInterview({ onBack, onRestart }) {
   });
   $('next-btn').addEventListener('click', nextQuestion);
   $('back-btn').addEventListener('click', () => callbacks.onBack());
-  $('finish-back-btn').addEventListener('click', () => callbacks.onBack());
-  $('restart-btn').addEventListener('click', () => callbacks.onRestart());
+  $('skip-btn').addEventListener('click', skipQuestion);
+  $('finish-btn').addEventListener('click', () => callbacks.onFinish(state.sid));
   $('toggle-text-btn').addEventListener('click', () => {
     state.textVisible = !state.textVisible;
     applyTextVisibility();

@@ -35,11 +35,24 @@ export function jsonRequest(method, data) {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) };
 }
 
-const SCREENS = ['home', 'prepare', 'interview', 'finish'];
+const SCREENS = ['home', 'prepare', 'interview', 'finish', 'history'];
 
 export function showScreen(name) {
   SCREENS.forEach((id) => { $(id).hidden = id !== name; });
   showError('');
+}
+
+export const STATUS_LABELS = {
+  ok: 'Хорошо',
+  improve: 'Доработать',
+  redo: 'Переделать',
+  answered: 'Без разбора',
+  skipped: 'Пропущен',
+  new: 'Не начат',
+};
+
+export function formatDate(iso) {
+  return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 export function element(tag, className, text) {

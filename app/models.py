@@ -43,3 +43,5 @@ class Session(BaseModel):
     started_at: str
     questions: list[Question]
     attempts: list[Attempt] = Field(default_factory=list)
+    skipped: list[int] = Field(default_factory=list)
+    finished_at: str | None = None

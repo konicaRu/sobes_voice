@@ -15,7 +15,7 @@ const CATEGORY_LABELS = {
   motivation: 'Мотивация',
 };
 
-let callbacks = { onBack: () => {}, onStart: () => {} };
+let callbacks = { onBack: () => {}, onStart: (_id) => {}, onHistory: (_id) => {}, onWeak: (_id) => {} };
 // ctx.draft: редактируемый список; ctx.approvedCount: сколько вопросов утверждено на сервере
 let ctx = null;
 
@@ -430,8 +430,10 @@ export async function openPrepare(interviewId) {
   }
 }
 
-export function initPrepare({ onBack, onStart }) {
-  callbacks = { onBack, onStart };
+export function initPrepare({ onBack, onStart, onHistory, onWeak }) {
+  callbacks = { onBack, onStart, onHistory, onWeak };
+  $('history-open-btn').addEventListener('click', () => callbacks.onHistory(ctx.id));
+  $('weak-start-btn').addEventListener('click', () => callbacks.onWeak(ctx.id));
   $('back-home-btn').addEventListener('click', () => callbacks.onBack());
   $('profile-btn').addEventListener('click', buildProfile);
   $('profile-save-btn').addEventListener('click', saveProfile);

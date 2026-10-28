@@ -9,6 +9,7 @@ from app.generation import GeneratedQuestion, QuestionBatch
 from app.llm import LlmError
 from app.main import create_app
 from app.profile import ProfileDraft
+from app.report import ReportDraft
 from app.review import PointCheck, ReviewDraft
 from app.storage import Storage
 from app.stt import AudioError, Transcription
@@ -29,6 +30,9 @@ BATCH = QuestionBatch(questions=[
     GeneratedQuestion(text="Как вы проверяете SRM?", category="technical", what_to_check=["доли групп", "критерий"]),
     GeneratedQuestion(text="Почему вы хотите к нам?", category="motivation", what_to_check=["мотивы", "знание компании"]),
 ])
+
+
+REPORT_DRAFT = ReportDraft(summary="Неплохо, но нужны цифры.", weak_areas=["нет цифр"], recommendations=["называйте цифру результата"])
 
 
 class FakeStt:
@@ -66,6 +70,8 @@ class FakeLlm:
             return ProfileDraft(profile="Профиль: вёл A/B-тесты, retention +5%.")
         if model_cls is QuestionBatch:
             return BATCH
+        if model_cls is ReportDraft:
+            return REPORT_DRAFT
         return RESULT
 
 
@@ -528,6 +534,121 @@ def test_review_llm_error_is_503_with_message(make_client):
     response = client.post(f"/api/sessions/{sid}/review", json={"q": 0})
     assert response.status_code == 503
     assert response.json()["detail"] == "LM Studio не отвечает."
+
+
+# ---------- пропуск, отчёт, история, слабые вопросы ----------
+
+def answer(client, sid, q=0):
+    client.post(f"/api/sessions/{sid}/transcribe?q={q}", content=b"x")
+    return client.post(f"/api/sessions/{sid}/review", json={"q": q})
+
+
+def wait_for_report(client, sid, timeout=5.0):
+    deadline = time.time() + timeout
+    while True:
+        status = client.get(f"/api/sessions/{sid}/finish/status").json()
+        if status["state"] != "running" or time.time() > deadline:
+            return status
+        time.sleep(0.02)
+
+
+def test_skip_marks_question_once_and_validates_input(make_client):
+    client = make_client()
+    sid = new_session(client)["sid"]
+    assert client.post(f"/api/sessions/{sid}/skip", json={"q": 1}).json() == {"skipped": [1]}
+    assert client.post(f"/api/sessions/{sid}/skip", json={"q": 1}).json() == {"skipped": [1]}
+    assert client.get(f"/api/sessions/{sid}").json()["skipped"] == [1]
+    assert client.post(f"/api/sessions/{sid}/skip", json={"q": 9}).status_code == 404
+    assert client.post("/api/sessions/nope/skip", json={"q": 0}).status_code == 404
+
+
+def test_report_is_empty_before_finish(make_client):
+    client = make_client()
+    sid = new_session(client)["sid"]
+    assert client.get(f"/api/sessions/{sid}/report").json() == {"report": None, "finished_at": None}
+    assert client.get(f"/api/sessions/{sid}/finish/status").json()["state"] == "idle"
+
+
+def test_finish_needs_at_least_one_answer(make_client):
+    client = make_client()
+    sid = new_session(client)["sid"]
+    client.post(f"/api/sessions/{sid}/skip", json={"q": 0})
+    response = client.post(f"/api/sessions/{sid}/finish")
+    assert response.status_code == 409 and "ответ" in response.json()["detail"]
+
+
+def test_finish_builds_report_in_background_and_saves_it(make_client, tmp_path):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    sid = new_session(client)["sid"]
+    answer(client, sid, 0)
+    client.post(f"/api/sessions/{sid}/skip", json={"q": 1})
+    started = client.post(f"/api/sessions/{sid}/finish")
+    assert started.status_code == 200 and started.json()["state"] in ("running", "done")
+
+    status = wait_for_report(client, sid)
+    report = status["report"]
+    assert status["state"] == "done" and status["percent"] == 100
+    assert report["title"] == "Т2 — аналитик"
+    assert report["stats"]["answered"] == 1 and report["stats"]["skipped"] == 1 and report["stats"]["average"] == 3.0
+    assert [r["status"] for r in report["rows"]] == ["improve", "skipped", "new"]
+    assert report["summary"] == "Неплохо, но нужны цифры." and report["repeat"] == ["Первый вопрос?", "Второй вопрос?"]
+    assert "Первый вопрос?" in llm.calls[-1][1]["content"]
+
+    assert client.get(f"/api/sessions/{sid}/report").json()["report"] == report
+    assert client.get(f"/api/sessions/{sid}").json()["finished_at"] == status["finished_at"]
+    markdown = next(tmp_path.rglob("report.md")).read_text(encoding="utf-8")
+    assert markdown.startswith("# Отчёт: Т2 — аналитик") and "Неплохо, но нужны цифры." in markdown
+
+
+def test_finish_error_is_reported_in_status(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    sid = new_session(client)["sid"]
+    answer(client, sid, 0)
+    llm.error = LlmError("LM Studio не отвечает.")
+    client.post(f"/api/sessions/{sid}/finish")
+    status = wait_for_report(client, sid)
+    assert status["state"] == "error" and status["message"] == "LM Studio не отвечает."
+
+
+def test_history_lists_sessions_and_question_dynamics(make_client):
+    client = make_client(stt=FakeStt(texts=["первый ответ", "второй ответ"]))
+    interview = new_interview(client)
+    approve(client, interview["id"])
+    first = client.post(f"/api/interviews/{interview['id']}/sessions").json()["sid"]
+    answer(client, first, 0)
+    second = client.post(f"/api/interviews/{interview['id']}/sessions").json()["sid"]
+    answer(client, second, 0)
+    client.post(f"/api/interviews/{interview['id']}/sessions")  # без активности: в истории не показывается
+    history = client.get(f"/api/interviews/{interview['id']}/history").json()
+    assert [s["sid"] for s in history["sessions"]] == [first, second]
+    assert history["sessions"][0]["average"] == 3.0 and history["sessions"][0]["answered"] == 1
+    row = history["matrix"][0]
+    assert row["text"] == "Первый вопрос?" and [c["score"] for c in row["cells"]] == [3, 3]
+
+
+def test_history_of_unknown_interview_is_404(make_client):
+    assert make_client().get("/api/interviews/nope/history").status_code == 404
+
+
+def test_weak_mode_creates_session_from_questions_with_improve_or_redo(make_client):
+    client = make_client()
+    interview = new_interview(client)
+    approve(client, interview["id"])
+    first = client.post(f"/api/interviews/{interview['id']}/sessions").json()["sid"]
+    answer(client, first, 0)  # FakeLlm даёт оценку 3: «доработать»
+    weak = client.post(f"/api/interviews/{interview['id']}/sessions", json={"mode": "weak"})
+    assert weak.status_code == 200
+    assert [q["text"] for q in weak.json()["questions"]] == ["Первый вопрос?"]
+
+
+def test_weak_mode_without_weak_questions_is_409(make_client):
+    client = make_client()
+    interview = new_interview(client)
+    approve(client, interview["id"])
+    response = client.post(f"/api/interviews/{interview['id']}/sessions", json={"mode": "weak"})
+    assert response.status_code == 409 and "Слабых" in response.json()["detail"]
 
 
 def test_transcribe_rejects_oversized_body_with_413(make_client):

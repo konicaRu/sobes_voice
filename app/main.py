@@ -1,6 +1,7 @@
 import time
 from contextlib import asynccontextmanager
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -17,6 +18,15 @@ from app.llm import LlmError, build_llm
 from app.models import MAX_QUESTION_CHARS, MAX_QUESTIONS, SLOTS, Attempt, Question
 from app.profile import MAX_PROFILE_CHARS, build_profile, profile_percent
 from app.questions import merge_questions, parse_questions
+from app.report import (
+    build_history,
+    generate_report,
+    render_markdown,
+    report_percent,
+    session_rows,
+    session_stats,
+    weak_questions,
+)
 from app.review import MAX_VACANCY_CHARS, review_answer
 from app.storage import NotFoundError, Storage, StorageError
 from app.stt import AudioError, build_stt
@@ -38,6 +48,14 @@ class ReviewRequest(BaseModel):
 
 class InterviewRequest(BaseModel):
     title: str
+
+
+class SessionRequest(BaseModel):
+    mode: Literal["all", "weak"] = "all"
+
+
+class SkipRequest(BaseModel):
+    q: int = Field(ge=0)
 
 
 class ProfileRequest(BaseModel):
@@ -305,11 +323,22 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
 
     # ---------- сессии ----------
 
+    @app.get("/api/interviews/{interview_id}/history")
+    def get_history(interview_id: str):
+        storage.get_interview(interview_id)
+        return build_history(storage.list_sessions(interview_id))
+
     @app.post("/api/interviews/{interview_id}/sessions")
-    def create_session(interview_id: str):
-        if storage.load_questions(interview_id) is None:
+    def create_session(interview_id: str, body: SessionRequest | None = None):
+        approved = storage.load_questions(interview_id)
+        if approved is None:
             raise HTTPException(409, "Утвердите список вопросов перед началом собеседования.")
-        session = storage.create_session(interview_id)
+        questions = None
+        if body is not None and body.mode == "weak":
+            questions = weak_questions(storage.list_sessions(interview_id), approved)
+            if not questions:
+                raise HTTPException(409, "Слабых вопросов нет: на всё отвечено хорошо или ответов ещё не было.")
+        session = storage.create_session(interview_id, questions=questions)
         return {
             "sid": session.sid,
             "questions": [{"id": q.id, "text": q.text, "category": q.category} for q in session.questions],
@@ -322,6 +351,54 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     @app.get("/api/sessions/{sid}")
     def get_session(sid: str):
         return storage.load_session(sid)
+
+    @app.post("/api/sessions/{sid}/skip")
+    def skip_question(sid: str, body: SkipRequest):
+        session = storage.load_session(sid)
+        if body.q >= len(session.questions):
+            raise HTTPException(404, "Вопрос не найден.")
+        if body.q not in session.skipped:
+            session.skipped.append(body.q)
+            storage.save_session(session)
+        return {"skipped": session.skipped}
+
+    @app.post("/api/sessions/{sid}/finish")
+    def finish_session(sid: str):
+        """Собирает отчёт в фоне; ход виден через GET .../finish/status, готовый отчёт сохраняется на диск."""
+        key = f"report:{sid}"
+        if jobs.status(key)["state"] == "running":
+            return jobs.status(key)
+        session = storage.load_session(sid)
+        if session_stats(session_rows(session))["answered"] == 0:
+            raise HTTPException(409, "Нет ни одного ответа: ответьте хотя бы на один вопрос.")
+        title = storage.get_interview(session.interview_id).title
+
+        def work(progress) -> dict:
+            fresh = storage.load_session(sid)
+            data = generate_report(
+                app.state.llm, fresh, title, on_progress=progress,
+                known_terms=[*glossary.tts, *glossary.stt_fix.values()],
+            )
+            finished_at = datetime.now().isoformat(timespec="seconds")
+            fresh.finished_at = finished_at
+            storage.save_session(fresh)
+            storage.save_report(sid, data, render_markdown(title, data, finished_at))
+            return {"report": data, "finished_at": finished_at}
+
+        return jobs.start(
+            key, work, percent_of=report_percent, start_message="Считаю итоги…",
+            running_message="Модель пишет итог…", done_message="Отчёт готов.",
+        )
+
+    @app.get("/api/sessions/{sid}/finish/status")
+    def get_finish_status(sid: str):
+        storage.load_session(sid)
+        return jobs.status(f"report:{sid}")
+
+    @app.get("/api/sessions/{sid}/report")
+    def get_report(sid: str):
+        session = storage.load_session(sid)
+        return {"report": storage.load_report(sid), "finished_at": session.finished_at}
 
     @app.post("/api/sessions/{sid}/transcribe")
     async def transcribe(sid: str, request: Request, q: int = Query(ge=0)):
