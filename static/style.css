@@ -148,7 +148,8 @@ textarea { width: 100%; resize: vertical; }
 .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
 .slot { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg); }
 .slot input[type="file"] { margin-top: 8px; max-width: 100%; font-size: 13px; }
-.generate { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 4px; }
+.toggle { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 14px; cursor: pointer; }
+.generate { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 4px; }
 .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 8px 0; }
 .counts label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
 .counts input { width: 80px; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }

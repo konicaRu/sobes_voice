@@ -229,8 +229,14 @@ function generationCounts() {
   );
 }
 
+function showGenerationPanel(visible) {
+  $('generate-toggle').checked = visible;
+  $('generate-panel').hidden = !visible;
+}
+
 function applyGenerationStatus(status) {
   ctx.generating = status.state === 'running';
+  if (ctx.generating) showGenerationPanel(true);
   $('generate-progress').hidden = !ctx.generating;
   $('generate-progress').value = status.percent;
   $('generate-btn').textContent = ctx.generating ? 'Генерирую…' : 'Сгенерировать';
@@ -403,6 +409,9 @@ export async function openPrepare(interviewId) {
     $('profile-text').value = details.profile || '';
     $('profile-status').textContent = '';
     $('profile-progress').hidden = true;
+    showGenerationPanel(false); // генерация необязательна: по умолчанию вопросы берутся из файла
+    $('generate-progress').hidden = true;
+    $('generate-status').textContent = '';
     renderSlots();
     renderEditor();
     // сборка могла быть запущена до перезагрузки страницы: подхватываем ход
@@ -427,6 +436,7 @@ export function initPrepare({ onBack, onStart }) {
   $('profile-btn').addEventListener('click', buildProfile);
   $('profile-save-btn').addEventListener('click', saveProfile);
   $('generate-btn').addEventListener('click', generateQuestions);
+  $('generate-toggle').addEventListener('change', () => showGenerationPanel($('generate-toggle').checked));
   $('profile-text').addEventListener('input', updateGenerateButton);
   $('parse-btn').addEventListener('click', parseQuestions);
   $('add-question-btn').addEventListener('click', () => {

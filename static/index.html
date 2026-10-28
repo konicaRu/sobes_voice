@@ -62,9 +62,12 @@
           <button id="add-question-btn">Добавить вопрос</button>
         </div>
 
-        <div class="generate">
-          <h3>Сгенерировать вопросы</h3>
-          <p class="muted">Из вакансии и профиля кандидата. Новые вопросы добавятся в конец списка и не будут повторять уже имеющиеся, поэтому можно сначала извлечь вопросы из файла, а потом догенерировать.</p>
+        <label class="toggle">
+          <input type="checkbox" id="generate-toggle">
+          Догенерировать вопросы из вакансии и профиля (необязательно)
+        </label>
+        <div class="generate" id="generate-panel" hidden>
+          <p class="muted">По умолчанию вопросы берутся из загруженного файла. Здесь можно добавить к ним сгенерированные: они появятся в конце списка и не будут повторять уже имеющиеся. Нужна вакансия или профиль кандидата.</p>
           <div class="counts">
             <label>Опыт и кейсы <input type="number" id="count-experience" min="0" max="10" value="3"></label>
             <label>Технические <input type="number" id="count-technical" min="0" max="10" value="4"></label>
