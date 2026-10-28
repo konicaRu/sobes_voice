@@ -62,8 +62,9 @@ class LlmClient:
             raise LlmError("В LM Studio не загружена модель. Загрузите чат-модель и повторите.")
         return chat_models[0]
 
-    def chat_json(self, messages: list[dict], model_cls: type[T]) -> T:
+    def chat_json(self, messages: list[dict], model_cls: type[T], temperature: float | None = None) -> T:
         model = self.get_model()
+        temperature = self._temperature if temperature is None else temperature
         working = [dict(m) for m in messages]
         response_format = {
             "type": "json_schema",
@@ -75,7 +76,7 @@ class LlmClient:
                 response = self._client.chat.completions.create(
                     model=model,
                     messages=self._prepare(working),
-                    temperature=self._temperature,
+                    temperature=temperature,
                     max_tokens=self._max_tokens,
                     response_format=response_format,
                 )

@@ -14,7 +14,7 @@
 import re
 from dataclasses import dataclass, field
 
-from app.models import MAX_CRITERIA, MAX_CRITERION_CHARS, MAX_QUESTION_CHARS, Question
+from app.models import MAX_CRITERIA, MAX_CRITERION_CHARS, MAX_QUESTION_CHARS, MAX_REFERENCE_CHARS, Question
 
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 LIST_ITEM = re.compile(r"^(\s*)(\d+[.)]|[-*•–—])\s+(.+)$")
@@ -24,6 +24,10 @@ LABEL = re.compile(
     r"[*_]*\s*[:：]\s*(.*)$",
     re.IGNORECASE,
 )
+REFERENCE_LABEL = re.compile(
+    r"^\s*[*_]*(?:коротко|вслух(?:,\s*на\s+минуту)?|эталонн\w+\s+ответ|эталон)[*_]*\s*[:：]\s*(.*)$", re.IGNORECASE
+)
+QUOTE_LINE = re.compile(r"^\s*>\s?(.*)$")
 WHOLE_LINE_BOLD = re.compile(r"^(\s*)\*\*(.+?)\*\*\s*$")
 CODE_FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.MULTILINE | re.DOTALL)
 HEADING_NUMBER = re.compile(r"^\d+[а-яa-z]?[.)]\s+", re.IGNORECASE)
@@ -37,6 +41,7 @@ class _Candidate:
     kind: str  # num | bullet | heading | plain
     indent: int
     criteria: list[str] = field(default_factory=list)
+    reference: list[str] = field(default_factory=list)
 
 
 def _clean(text: str) -> str:
@@ -62,9 +67,25 @@ def parse_questions(text: str, category: str = "general") -> list[Question]:
     deep_headings: list[str] = []
     current: _Candidate | None = None
     criteria_mode = False
+    reference_mode = False
 
     for line in lines:
         if not line.strip() or line.lstrip().startswith("|"):
+            continue
+
+        quote = QUOTE_LINE.match(line)
+        if quote:  # цитата: эталонный ответ после «Коротко:», иначе пропускаем
+            if reference_mode and current is not None and quote[1].strip():
+                current.reference.append(quote[1].strip())
+            continue
+        reference_mode = False
+
+        reference = REFERENCE_LABEL.match(line)
+        if reference:
+            if current is not None:
+                if reference[1].strip():
+                    current.reference.append(reference[1].strip())
+                reference_mode = True
             continue
 
         label = LABEL.match(line)
@@ -141,5 +162,11 @@ def _to_questions(candidates: list[_Candidate], category: str) -> list[Question]
             continue
         seen.add(key)
         criteria = [c[:MAX_CRITERION_CHARS] for c in candidate.criteria if c][:MAX_CRITERIA]
-        questions.append(Question(id=f"q{len(questions) + 1:02d}", text=text, category=category, what_to_check=criteria))
+        reference = " ".join(candidate.reference).strip().strip("«»").strip()[:MAX_REFERENCE_CHARS]
+        questions.append(
+            Question(
+                id=f"q{len(questions) + 1:02d}", text=text, category=category, what_to_check=criteria,
+                reference_answer=reference,
+            )
+        )
     return questions

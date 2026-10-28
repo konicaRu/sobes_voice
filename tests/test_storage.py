@@ -98,6 +98,14 @@ def test_questions_roundtrip_and_survive_restart(tmp_path):
     assert Storage(tmp_path).load_questions(interview.id) == QUESTIONS
 
 
+def test_profile_roundtrip_and_survives_restart(tmp_path):
+    storage = Storage(tmp_path)
+    interview = make_interview(storage)
+    assert storage.load_profile(interview.id) is None
+    storage.save_profile(interview.id, "# Профиль\nВёл A/B-тесты.")
+    assert Storage(tmp_path).load_profile(interview.id) == "# Профиль\nВёл A/B-тесты."
+
+
 def test_session_requires_approved_questions(storage):
     interview = make_interview(storage)
     with pytest.raises(StorageError, match="Утвердите"):

@@ -133,6 +133,15 @@ class Storage:
             return None
         return [Question.model_validate(q) for q in json.loads(path.read_text(encoding="utf-8"))["questions"]]
 
+    # ---------- профиль кандидата ----------
+
+    def save_profile(self, interview_id: str, text: str) -> None:
+        _write_json(self._interview_dir(interview_id) / "profile.md", text)
+
+    def load_profile(self, interview_id: str) -> str | None:
+        path = self._interview_dir(interview_id) / "profile.md"
+        return path.read_text(encoding="utf-8") if path.is_file() else None
+
     # ---------- сессии ----------
 
     def _session_dir(self, sid: str) -> Path:

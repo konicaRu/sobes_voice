@@ -6,12 +6,13 @@ from fastapi.testclient import TestClient
 from app.config import Config, Glossary, SttConfig
 from app.llm import LlmError
 from app.main import create_app
-from app.review import ReviewResult
+from app.profile import ProfileDraft
+from app.review import PointCheck, ReviewDraft
 from app.storage import Storage
 from app.stt import AudioError, Transcription
 
-RESULT = ReviewResult(
-    verdict="improve", score=3, strengths=["есть пример"], issues=["нет цифр"],
+RESULT = ReviewDraft(
+    coverage=[PointCheck(point="цифры", quote="нет")], score=3, strengths=["есть пример"], issues=["нет цифр"],
     how_to_fix=["назвать цифры"], improved_outline="1. контекст 2. цифры", spoken_summary="Добавьте цифры.",
 )
 QUESTIONS = [
@@ -48,18 +49,20 @@ class FakeLlm:
             raise self.error
         return "qwen-test"
 
-    def chat_json(self, messages, model_cls):
+    def chat_json(self, messages, model_cls, **kwargs):
         if self.error:
             raise self.error
         self.calls.append(messages)
+        if model_cls is ProfileDraft:
+            return ProfileDraft(profile="Профиль: вёл A/B-тесты, retention +5%.")
         return RESULT
 
 
 @pytest.fixture
 def make_client(tmp_path):
-    def factory(stt=None, tts=None, llm=None, config=None):
+    def factory(stt=None, tts=None, llm=None, config=None, glossary=None):
         app = create_app(
-            config=config or Config(), glossary=Glossary(), storage=Storage(tmp_path),
+            config=config or Config(), glossary=glossary or Glossary(), storage=Storage(tmp_path),
             stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(),
         )
         return TestClient(app)
@@ -240,6 +243,18 @@ def test_approve_questions_renumbers_ids_and_saves(make_client):
     assert client.get("/api/interviews").json()[0]["questions"] == 2
 
 
+def test_reference_answer_is_extracted_trimmed_and_saved(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    notes = "### 1. Что такое SRM?\n**Коротко:**\n> Проверка долей.\n### 2. Что такое MDE?\n### 3. Что такое CUPED?"
+    upload(client, interview_id, "questions", "q.md", notes.encode())
+    parsed = client.post(f"/api/interviews/{interview_id}/questions/parse").json()["questions"]
+    assert parsed[0]["reference_answer"] == "Проверка долей."
+    parsed[0]["reference_answer"] = "  Правка пользователя.  "
+    saved = client.put(f"/api/interviews/{interview_id}/questions", json={"questions": parsed}).json()["questions"]
+    assert saved[0]["reference_answer"] == "Правка пользователя."
+
+
 def test_approve_rejects_empty_blank_and_too_many_questions(make_client):
     client = make_client()
     interview_id = new_interview(client)["id"]
@@ -333,6 +348,48 @@ def test_review_uses_question_criteria_and_transcript(make_client):
     assert response.json()["verdict"] == "improve"
     user_message = llm.calls[0][1]["content"]
     assert "Первый вопрос?" in user_message and "критерий" in user_message and "мой ответ" in user_message
+
+
+def test_build_profile_needs_resume_or_cases_and_is_cached(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    interview_id = new_interview(client)["id"]
+    assert client.post(f"/api/interviews/{interview_id}/profile").status_code == 409
+    upload(client, interview_id, "resume", "cv.md", "Аналитик, A/B-тесты, SQL".encode())
+    upload(client, interview_id, "cases", "кейс.md", "Retention вырос на 5%".encode())
+    response = client.post(f"/api/interviews/{interview_id}/profile")
+    assert response.status_code == 200
+    assert response.json()["profile"] == "Профиль: вёл A/B-тесты, retention +5%."
+    user = llm.calls[0][1]["content"]
+    assert "A/B-тесты, SQL" in user and "Retention вырос на 5%" in user
+    assert client.get(f"/api/interviews/{interview_id}").json()["profile"] == response.json()["profile"]
+
+
+def test_profile_can_be_edited_by_user(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    response = client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "  Свой профиль  "})
+    assert response.status_code == 200
+    assert client.get(f"/api/interviews/{interview_id}").json()["profile"] == "Свой профиль"
+    assert client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "я" * 6001}).status_code == 422
+
+
+def test_review_gets_profile_vacancy_reference_and_glossary_terms(make_client):
+    llm = FakeLlm()
+    glossary = Glossary(tts={"SQL": "эс-кью-эль"}, stt_fix={"клик хаус": "ClickHouse"})
+    client = make_client(llm=llm, glossary=glossary)
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "vacancy", "вакансия.md", "Нужен продуктовый аналитик".encode())
+    client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "Вёл A/B-тесты"})
+    approve(client, interview_id, [{"text": "Что такое SRM?", "reference_answer": "Проверка долей групп."}])
+    sid = client.post(f"/api/interviews/{interview_id}/sessions").json()["sid"]
+    client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
+    client.post(f"/api/sessions/{sid}/review", json={"q": 0})
+    user = llm.calls[0][1]["content"]
+    assert "Вёл A/B-тесты" in user
+    assert "Нужен продуктовый аналитик" in user
+    assert "Проверка долей групп." in user
+    assert "ClickHouse" in user and "SQL" in user
 
 
 def test_review_without_answer_is_409(make_client):

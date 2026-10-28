@@ -189,6 +189,40 @@ def test_heading_number_prefix_is_removed_in_list_mode_too():
     assert texts(questions) == ["Что такое SRM?", "Что такое MDE?"]
 
 
+REFERENCE_NOTES = """### 1. Что такое SRM?
+
+**Коротко:**
+> «Это проверка, что доли групп совпадают с планом.
+> Если нет, тест нельзя читать.»
+
+**Ловушка.** Не путать с p-value.
+
+### 2. Что такое MDE?
+Вслух, на минуту:
+> Минимальный эффект, который мы хотим заметить.
+
+### 3. Что такое CUPED?
+"""
+
+
+def test_blockquote_after_short_answer_label_becomes_reference_answer():
+    questions = parse_questions(REFERENCE_NOTES)
+    assert questions[0].reference_answer == "Это проверка, что доли групп совпадают с планом. Если нет, тест нельзя читать."
+    assert questions[1].reference_answer == "Минимальный эффект, который мы хотим заметить."
+    assert questions[2].reference_answer == ""
+    assert all(q.what_to_check == [] for q in questions)
+
+
+def test_short_answer_before_any_question_is_ignored():
+    text = "Коротко:\n> лишнее\n\n### 1. А ли?\n### 2. Б ли?\n### 3. В ли?"
+    assert [q.reference_answer for q in parse_questions(text)] == ["", "", ""]
+
+
+def test_reference_answer_in_list_mode():
+    questions = parse_questions("1. Что такое SRM?\n   Коротко: проверка долей групп.\n2. Что такое MDE?")
+    assert questions[0].reference_answer == "проверка долей групп."
+
+
 def test_merge_questions_dedupes_across_files_and_renumbers():
     first = [Question(id="q01", text="Что такое SRM?"), Question(id="q02", text="Что такое MDE?")]
     second = [Question(id="q01", text="что такое srm?"), Question(id="q02", text="Что такое CUPED?")]

@@ -36,6 +36,38 @@ function renderSlots() {
     return card;
   }));
   $('parse-btn').disabled = ctx.documents.questions.length === 0;
+  $('profile-btn').disabled = ctx.documents.resume.length + ctx.documents.cases.length === 0;
+}
+
+// ---------- профиль кандидата ----------
+
+async function buildProfile() {
+  showError('');
+  const button = $('profile-btn');
+  button.disabled = true;
+  button.textContent = 'Собираю профиль…';
+  $('profile-status').textContent = 'Это займёт около минуты.';
+  try {
+    const result = await json(`/api/interviews/${ctx.id}/profile`, { method: 'POST' });
+    $('profile-text').value = result.profile;
+    $('profile-status').textContent = 'Профиль собран и сохранён. Проверьте факты и цифры.';
+  } catch (error) {
+    showError(error.message);
+    $('profile-status').textContent = '';
+  }
+  button.textContent = 'Собрать профиль из резюме и кейсов';
+  renderSlots();
+}
+
+async function saveProfile() {
+  showError('');
+  try {
+    const result = await json(`/api/interviews/${ctx.id}/profile`, jsonRequest('PUT', { profile: $('profile-text').value }));
+    $('profile-text').value = result.profile;
+    $('profile-status').textContent = 'Сохранено.';
+  } catch (error) {
+    showError(error.message);
+  }
 }
 
 async function refreshDocuments() {
@@ -74,7 +106,11 @@ async function removeFile(slot, name) {
 
 // ---------- редактор вопросов ----------
 
-const toDraft = (question) => ({ text: question.text, criteria: question.what_to_check.join('\n') });
+const toDraft = (question) => ({
+  text: question.text,
+  criteria: question.what_to_check.join('\n'),
+  reference: question.reference_answer || '',
+});
 
 function updateStatus() {
   const status = $('approve-status');
@@ -123,7 +159,12 @@ function renderEditor() {
     criteria.placeholder = 'Что проверять (по одному пункту в строке, можно оставить пустым)';
     criteria.value = item.criteria;
     criteria.addEventListener('input', () => { item.criteria = criteria.value; markDirty(); });
-    row.append(head, text, criteria);
+    const reference = element('textarea', 'q-criteria');
+    reference.rows = 2;
+    reference.placeholder = 'Эталонный ответ (необязательно): как вы сами хотите отвечать. Ревьюер сверяет ответ с ним';
+    reference.value = item.reference;
+    reference.addEventListener('input', () => { item.reference = reference.value; markDirty(); });
+    row.append(head, text, criteria, reference);
     return row;
   }));
   updateStatus();
@@ -149,6 +190,7 @@ async function approveQuestions() {
     .map((item) => ({
       text: item.text.trim(),
       what_to_check: item.criteria.split('\n').map((line) => line.trim()).filter(Boolean),
+      reference_answer: item.reference.trim(),
     }));
   try {
     const saved = await json(`/api/interviews/${ctx.id}/questions`, jsonRequest('PUT', { questions }));
@@ -175,6 +217,8 @@ export async function openPrepare(interviewId) {
       dirty: false,
     };
     $('prepare-title').textContent = details.interview.title;
+    $('profile-text').value = details.profile || '';
+    $('profile-status').textContent = '';
     renderSlots();
     renderEditor();
   } catch (error) {
@@ -185,9 +229,11 @@ export async function openPrepare(interviewId) {
 export function initPrepare({ onBack, onStart }) {
   callbacks = { onBack, onStart };
   $('back-home-btn').addEventListener('click', () => callbacks.onBack());
+  $('profile-btn').addEventListener('click', buildProfile);
+  $('profile-save-btn').addEventListener('click', saveProfile);
   $('parse-btn').addEventListener('click', parseQuestions);
   $('add-question-btn').addEventListener('click', () => {
-    ctx.draft.push({ text: '', criteria: '' });
+    ctx.draft.push({ text: '', criteria: '', reference: '' });
     markDirty();
     renderEditor();
   });

@@ -11,8 +11,9 @@ from app.config import ROOT, load_config, load_glossary
 from app.documents import MAX_UPLOAD_BYTES, DocumentError, extract_text, safe_filename
 from app.llm import LlmError, build_llm
 from app.models import MAX_QUESTIONS, SLOTS, Attempt, Question
+from app.profile import MAX_PROFILE_CHARS, build_profile
 from app.questions import merge_questions, parse_questions
-from app.review import review_answer
+from app.review import MAX_VACANCY_CHARS, review_answer
 from app.storage import NotFoundError, Storage, StorageError
 from app.stt import AudioError, build_stt
 from app.tts import build_tts
@@ -33,6 +34,10 @@ class ReviewRequest(BaseModel):
 
 class InterviewRequest(BaseModel):
     title: str
+
+
+class ProfileRequest(BaseModel):
+    profile: str = Field(max_length=MAX_PROFILE_CHARS)
 
 
 class QuestionsPayload(BaseModel):
@@ -63,7 +68,10 @@ def clean_questions(questions: list[Question]) -> list[Question]:
         points = [p.strip() for p in question.expected_points if p.strip()]
         cleaned.append(
             question.model_copy(
-                update={"id": f"q{len(cleaned) + 1:02d}", "text": text, "what_to_check": criteria, "expected_points": points}
+                update={
+                    "id": f"q{len(cleaned) + 1:02d}", "text": text, "what_to_check": criteria,
+                    "expected_points": points, "reference_answer": question.reference_answer.strip(),
+                }
             )
         )
     return cleaned
@@ -103,6 +111,22 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     @app.exception_handler(DocumentError)
     async def document_error_handler(request: Request, exc: DocumentError):
         return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    def review_context(interview_id: str) -> dict:
+        """Профиль, вакансия и термины, которые добавляются к каждому разбору ответа."""
+        vacancy = ""
+        for name in storage.list_documents(interview_id)["vacancy"]:
+            try:
+                vacancy += extract_text(name, storage.read_document(interview_id, "vacancy", name)) + "\n"
+            except DocumentError:
+                continue
+            if len(vacancy) >= MAX_VACANCY_CHARS:
+                break
+        return {
+            "profile": storage.load_profile(interview_id) or "",
+            "vacancy": vacancy[:MAX_VACANCY_CHARS],
+            "terms": [*glossary.tts, *glossary.stt_fix.values()],
+        }
 
     # ---------- здоровье и озвучка ----------
 
@@ -152,7 +176,27 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             "interview": storage.get_interview(interview_id),
             "documents": storage.list_documents(interview_id),
             "questions": None if questions is None else [q.model_dump() for q in questions],
+            "profile": storage.load_profile(interview_id),
         }
+
+    @app.post("/api/interviews/{interview_id}/profile")
+    def create_profile(interview_id: str):
+        documents = storage.list_documents(interview_id)
+        texts = {
+            slot: [extract_text(name, storage.read_document(interview_id, slot, name)) for name in documents[slot]]
+            for slot in ("resume", "cases")
+        }
+        if not texts["resume"] and not texts["cases"]:
+            raise HTTPException(409, "Сначала загрузите резюме или кейсы.")
+        profile = build_profile(app.state.llm, texts["resume"], texts["cases"])
+        storage.save_profile(interview_id, profile)
+        return {"profile": profile}
+
+    @app.put("/api/interviews/{interview_id}/profile")
+    def save_profile(interview_id: str, body: ProfileRequest):
+        profile = body.profile.strip()
+        storage.save_profile(interview_id, profile)
+        return {"profile": profile}
 
     @app.post("/api/interviews/{interview_id}/documents")
     async def upload_document(
@@ -245,7 +289,9 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             raise HTTPException(409, "Сначала запишите ответ на этот вопрос.")
         attempt = attempts[-1]
         started = time.perf_counter()
-        result = review_answer(app.state.llm, session.questions[body.q], attempt.text, attempt.seconds)
+        result = review_answer(
+            app.state.llm, session.questions[body.q], attempt.text, attempt.seconds, **review_context(session.interview_id)
+        )
         attempt.review = result.model_dump()
         storage.save_session(session)
         return {**result.model_dump(), "elapsed": time.perf_counter() - started}

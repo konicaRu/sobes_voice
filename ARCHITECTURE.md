@@ -17,22 +17,26 @@
   - `documents.py`: извлечение текста из md/txt/docx/pdf, безопасные имена файлов, лимиты (5 МБ, 50 МБ в распакованном docx, 300 страниц pdf).
   - `questions.py`: парсер списка вопросов (нумерованные и маркированные списки, заголовки, строки с «?», критерии; режим заголовков для конспектов) и склейка списков из нескольких файлов.
   - `stt.py` (GigaAM, нарезка по паузам, приведение к 16 кГц, выравнивание громкости), `tts.py` (Silero, кэш WAV на диске), `text_norm.py` (глоссарий, числа, транслитерация латиницы).
-  - `llm.py` (клиент LM Studio, JSON-схема, повторы, лог `data/logs/llm.jsonl`), `review.py` + `prompts/review.md`.
+  - `llm.py` (клиент LM Studio, JSON-схема, повторы, температура на вызов, лог `data/logs/llm.jsonl`).
+  - `review.py` + `prompts/review.md`: разбор ответа. Модель сначала заполняет `coverage` (ключевые пункты с цитатами из ответа), потом ставит `score` 1–5 и пишет замечания. Вердикт считает код из оценки (4–5 ok, 3 improve, 1–2 redo). Код проверяет цитаты по расшифровке, ограничивает оценку долей нераскрытых пунктов, у хорошего ответа со всеми пунктами убирает замечания, списки режет до 3 (сильные стороны до 2), озвучка до 45 слов.
+  - `profile.py` + `prompts/candidate_profile.md`: профиль кандидата из резюме и кейсов (кэш `profile.md`, правится в UI). Профиль, начало вакансии, эталонный ответ вопроса и список терминов из глоссария добавляются в каждый разбор.
 - `static/`: страница без фреймворков, ES-модули. `index.html`, `style.css`, `main.js` (связка экранов), `ui.js` (общие помощники), `home.js` (список собеседований), `prepare.js` (документы по слотам и редактор вопросов), `interview.js` (голосовой цикл), `recorder-worklet.js` (запись через AudioWorklet, WAV 16 кГц mono).
-- `tests/`: pytest, 155 тестов; STT, TTS и LLM замоканы.
+- `tests/`: pytest, 200 тестов; STT, TTS и LLM замоканы.
 - `.claude/settings.json`: PostToolUse-хук (после правки `.py` прогоняет pytest через `scripts/hooks/pytest_on_py_edit.py`, лог в `data/logs/hook.log`).
 - `.claude/skills/git-save/`: скилл `/git-save` (тесты, pyright, обновление MEMORY/ARCHITECTURE/README, коммит, пуш); запускается только пользователем.
 - `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
 - `config.yaml`, `glossary.yaml`: настройки и глоссарий.
 - `requirements.txt`: закреплённые зависимости (torch только CPU).
 - `scripts/check_lmstudio.py`, `check_stt.py`, `check_tts.py`: проверка компонентов (этап 0); `scripts/hooks/`: скрипт хука.
+- `scripts/eval_review.py` + `scripts/eval/review_cases.json`: оценка качества разбора на 10 эталонных парах (синтетические, без личных данных). Опции: `--prompt`, `--model`, `--runs N` (стабильность), `--only ID`. Результаты в `data/eval/` (`last.md` читается глазами).
 
 ## Данные на диске (`data/`, в .gitignore)
 ```
 data/interviews/<id>/
   interview.json
   docs/<questions|vacancy|resume|cases>/<файлы>
-  questions.json                     # утверждённый список
+  questions.json                     # утверждённый список (текст, критерии, эталонный ответ)
+  profile.md                         # профиль кандидата (кэш LLM, правится пользователем)
   sessions/<ГГГГММДД-ЧЧММСС>/
     session.json                     # вопросы-снимок, попытки, разборы
     audio/q01_a1.wav
@@ -48,6 +52,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe scripts\check_stt.py --record 10
 .\.venv\Scripts\python.exe scripts\check_stt.py --wav data\check\tts.wav
 .\.venv\Scripts\python.exe scripts\check_lmstudio.py
+.\.venv\Scripts\python.exe scripts\eval_review.py                # качество разбора, нужен LM Studio; --runs 3 для стабильности
 .\.venv\Scripts\python.exe -m pytest -q
 pyright                                   # из корня проекта, должно быть 0 errors
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000   # затем http://localhost:8000
@@ -59,9 +64,13 @@ pyright                                   # из корня проекта, до
 - STT: вместо Silero VAD длинные ответы режутся по паузам на куски ~20 с (`chunk_seconds`). Причина: VAD терял речь на тихих записях.
 - TTS: модель `v5_6_ru` (в плане `v5_5_ru`), темп через SSML (`tts.rate`).
 - LLM: `qwen2.5-14b-instruct-1m` Q4_K_M, контекст 8192 (в плане Qwen3-14B).
+- Разбор (этап 3): модель не возвращает `verdict` (в PLAN.md был), вердикт считается из `score`; добавлено поле `coverage` с цитатами и проверка цитат в коде. Причина: Qwen2.5-14B Q4 писал «ok» при оценке 2 и придирался к тому, что в ответе есть.
 - API (этап 2): файлы загружаются сырым телом запроса (`?slot=&filename=`), а не multipart; нечитаемый файл отклоняется до сохранения. `POST /api/sessions` этапа 1 убран, сессия создаётся через `POST /api/interviews/{id}/sessions` только при утверждённом списке. «Пропустить» и `/next` пока нет (навигация на клиенте).
 
 ## Changelog
+### 2026-10-28 (этап 3)
+- Эталонный ответ вопроса (`reference_answer`) из блока «Коротко:», профиль кандидата, контекст разбора (вакансия, термины), новая схема разбора с цитатами и вердиктом из оценки, `eval_review.py` и набор из 10 пар. Тесты: 200.
+
 ### 2026-10-28 (парсер на реальном файле)
 - `questions.py`: режим заголовков для конспектов (3+ заголовков с «?»), игнор блоков кода и таблиц, очистка номера и подзаголовка в заголовке-вопросе. Тесты: 155.
 

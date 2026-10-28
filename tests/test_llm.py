@@ -83,6 +83,14 @@ def test_chat_json_parses_into_model_and_sends_schema():
     assert request["model"] == "qwen2.5-14b"
 
 
+def test_chat_json_temperature_can_be_overridden_per_call():
+    fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}', '{"verdict": "ok", "score": 4}'])
+    client = make(fake)
+    client.chat_json([{"role": "user", "content": "x"}], Out)
+    client.chat_json([{"role": "user", "content": "x"}], Out, temperature=0.0)
+    assert [r["temperature"] for r in fake.requests] == [0.3, 0.0]
+
+
 def test_chat_json_appends_no_think_when_enabled():
     fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}'])
     make(fake).chat_json([{"role": "user", "content": "привет"}], Out)

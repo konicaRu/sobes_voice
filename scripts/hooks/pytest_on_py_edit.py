@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 TIMEOUT_S = 120
-TAIL_LINES = 30
+TAIL_LINES = 12
 PYTEST_NO_TESTS_COLLECTED = 5
 
 
