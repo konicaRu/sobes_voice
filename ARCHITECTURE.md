@@ -4,16 +4,22 @@
 Локальный голосовой тренажёр собеседований. Подробная архитектура и этапы: [PLAN.md](PLAN.md). Правила работы: [CLAUDE.md](CLAUDE.md).
 
 ## Структура
-Пока в репозитории только документы. Целевая структура описана в PLAN.md, раздел 3.
+Целевая структура описана в PLAN.md, раздел 3. Фактическое состояние (после этапа 2):
 
 - `PLAN.md`: план работ и архитектура.
 - `CLAUDE.md`: правила работы агента.
 - `project-starter.md`: резервная копия общего стартового чек-листа.
 - `MEMORY.md`: журнал сессий.
-
-- `app/`: бэкенд FastAPI (этап 1). `main.py` (роуты, фабрика `create_app` с внедрением движков), `config.py`, `stt.py` (GigaAM, нарезка по паузам, выравнивание громкости), `tts.py` (Silero, кэш WAV на диске), `text_norm.py` (глоссарий, числа, транслитерация латиницы), `llm.py` (клиент LM Studio, JSON-схема, повторы, лог `data/logs/llm.jsonl`), `review.py` + `prompts/review.md`, `models.py`, `sample_questions.py` (3 вопроса-заглушки).
-- `static/`: `index.html`, `app.js`, `recorder-worklet.js`, `style.css` (запись через AudioWorklet, WAV 16 кГц mono в браузере).
-- `tests/`: pytest, 80 тестов; STT, TTS и LLM замоканы.
+- `app/`: бэкенд FastAPI.
+  - `main.py`: роуты и фабрика `create_app` (движки и хранилище внедряются, в тестах подменяются); потоковое чтение тела с лимитом.
+  - `config.py`, `models.py` (Question, Interview, Attempt, Session, слоты документов).
+  - `storage.py`: JSON и файлы в `data/interviews/` (собеседования, документы, вопросы, сессии, аудио); защита от выхода за папки.
+  - `documents.py`: извлечение текста из md/txt/docx/pdf, безопасные имена файлов, лимиты (5 МБ, 50 МБ в распакованном docx, 300 страниц pdf).
+  - `questions.py`: парсер списка вопросов (нумерованные и маркированные списки, заголовки, строки с «?», критерии) и склейка списков из нескольких файлов.
+  - `stt.py` (GigaAM, нарезка по паузам, приведение к 16 кГц, выравнивание громкости), `tts.py` (Silero, кэш WAV на диске), `text_norm.py` (глоссарий, числа, транслитерация латиницы).
+  - `llm.py` (клиент LM Studio, JSON-схема, повторы, лог `data/logs/llm.jsonl`), `review.py` + `prompts/review.md`.
+- `static/`: страница без фреймворков, ES-модули. `index.html`, `style.css`, `main.js` (связка экранов), `ui.js` (общие помощники), `home.js` (список собеседований), `prepare.js` (документы по слотам и редактор вопросов), `interview.js` (голосовой цикл), `recorder-worklet.js` (запись через AudioWorklet, WAV 16 кГц mono).
+- `tests/`: pytest, 149 тестов; STT, TTS и LLM замоканы.
 - `.claude/settings.json`: PostToolUse-хук (после правки `.py` прогоняет pytest через `scripts/hooks/pytest_on_py_edit.py`, лог в `data/logs/hook.log`).
 - `.claude/skills/git-save/`: скилл `/git-save` (тесты, pyright, обновление MEMORY/ARCHITECTURE/README, коммит, пуш); запускается только пользователем.
 - `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
