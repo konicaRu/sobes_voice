@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -172,6 +174,33 @@ def test_transcribe_rejects_oversized_body_with_413():
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"\0" * 6_500_000)
     assert response.status_code == 413
     assert "длинн" in response.json()["detail"]
+
+
+def test_transcribe_stops_reading_streamed_body_at_cap():
+    stt = FakeStt()
+    app = create_app(
+        config=Config(stt=SttConfig(max_answer_seconds=1)), glossary=Glossary(), stt=stt, tts=FakeTts(), llm=FakeLlm()
+    )
+    sid = new_session(TestClient(app))["sid"]
+    received, sent = [], []
+
+    async def receive():  # поток кусков по 1 МБ без заголовка Content-Length
+        received.append(1)
+        return {"type": "http.request", "body": b"\0" * 1_000_000, "more_body": len(received) < 50}
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http", "method": "POST", "path": f"/api/sessions/{sid}/transcribe", "query_string": b"q=0",
+        "headers": [(b"content-type", b"audio/wav")], "http_version": "1.1", "scheme": "http",
+        "server": ("test", 80), "client": ("test", 1), "root_path": "",
+    }
+    asyncio.run(app(scope, receive, send))
+
+    assert sent[0]["status"] == 413
+    assert stt.texts == ["мой ответ"]  # распознавание не вызывалось
+    assert len(received) < 50  # чтение прервано по достижении лимита, а не после буферизации всего тела
 
 
 def test_transcribe_audio_error_is_422_with_message():

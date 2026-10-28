@@ -113,9 +113,14 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None) -> Fast
         too_long = HTTPException(413, "Запись слишком длинная.")
         if int(request.headers.get("content-length") or 0) > max_bytes:
             raise too_long
-        body = await request.body()
-        if len(body) > max_bytes:
-            raise too_long
+        # Content-Length необязателен, поэтому лимит проверяется и по ходу чтения тела
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_bytes:
+                raise too_long
+            chunks.append(chunk)
+        body = b"".join(chunks)
         try:
             result = await run_in_threadpool(app.state.stt.transcribe, body)
         except AudioError as exc:

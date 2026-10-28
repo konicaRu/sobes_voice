@@ -87,6 +87,30 @@ def test_engine_rejects_too_long_audio():
         engine.transcribe(wav_bytes(speech(15)))
 
 
+def test_too_long_audio_is_rejected_before_decoding(monkeypatch):
+    def boom(*args, **kwargs):
+        raise AssertionError("аудио декодировано до проверки длительности")
+
+    monkeypatch.setattr("app.stt.sf.read", boom)
+    engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={}, max_seconds=10)
+    with pytest.raises(AudioError, match="длинн"):
+        engine.transcribe(wav_bytes(speech(15)))
+
+
+def test_non_wav_formats_are_rejected():
+    buf = io.BytesIO()
+    sf.write(buf, speech(1), SR, format="FLAC")
+    engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={})
+    with pytest.raises(AudioError, match="WAV"):
+        engine.transcribe(buf.getvalue())
+
+
+def test_garbage_bytes_give_audio_error():
+    engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={})
+    with pytest.raises(AudioError, match="прочитать"):
+        engine.transcribe("это не аудио".encode())
+
+
 def test_engine_skips_empty_chunks():
     texts = iter(["Привет", "", "мир"])
     engine = SttEngine(lambda chunk, sr: next(texts), chunk_seconds=20, stt_fix={})

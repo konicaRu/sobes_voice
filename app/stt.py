@@ -27,9 +27,21 @@ class AudioError(ValueError):
     """Непригодная запись; сообщение на русском для показа в интерфейсе."""
 
 
-def decode_wav(data: bytes) -> tuple[np.ndarray, int]:
-    """WAV → float32 mono в диапазоне [-1, 1]. На int16 GigaAM молча возвращает пустую строку."""
+def decode_wav(data: bytes, max_seconds: float | None = None) -> tuple[np.ndarray, int]:
+    """WAV → float32 mono в диапазоне [-1, 1]. На int16 GigaAM молча возвращает пустую строку.
+
+    Заголовок проверяется до декодирования: формат, частота и длительность.
+    """
     try:
+        info = sf.info(io.BytesIO(data))
+        if info.format != "WAV":
+            raise AudioError("Поддерживается только запись в формате WAV.")
+        if not MIN_SAMPLE_RATE <= info.samplerate <= MAX_SAMPLE_RATE:
+            raise AudioError(f"Неподдерживаемая частота записи ({info.samplerate} Гц).")
+        if info.frames == 0:
+            raise AudioError("Запись пустая. Проверьте микрофон и попробуйте ещё раз.")
+        if max_seconds is not None and info.frames / info.samplerate > max_seconds:
+            raise AudioError("Запись слишком длинная.")
         waveform, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=True)
     except (sf.LibsndfileError, RuntimeError) as exc:
         raise AudioError("Не удалось прочитать запись. Попробуйте записать ответ ещё раз.") from exc
@@ -73,13 +85,7 @@ class SttEngine:
 
     def transcribe(self, wav: bytes) -> Transcription:
         started = time.perf_counter()
-        waveform, sr = decode_wav(wav)
-        if not MIN_SAMPLE_RATE <= sr <= MAX_SAMPLE_RATE:
-            raise AudioError(f"Неподдерживаемая частота записи ({sr} Гц).")
-        if len(waveform) == 0:
-            raise AudioError("Запись пустая. Проверьте микрофон и попробуйте ещё раз.")
-        if len(waveform) / sr > self._max_seconds:
-            raise AudioError("Запись слишком длинная.")
+        waveform, sr = decode_wav(wav, self._max_seconds)
         waveform = normalize_level(waveform)
         cuts = split_at_pauses(waveform, sr, self._chunk_seconds)
         parts = (self._recognize(waveform[a:b], sr).strip() for a, b in cuts)
