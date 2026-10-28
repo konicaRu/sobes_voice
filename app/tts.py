@@ -75,7 +75,7 @@ def build_tts(config: Config, glossary: Glossary, cache_dir: Path) -> TtsEngine:
     from silero import silero_tts
 
     torch.set_num_threads(4)
-    model, _ = silero_tts(language="ru", speaker=config.tts.model)
+    model = silero_tts(language="ru", speaker=config.tts.model)[0]
     model.to(torch.device("cpu"))
 
     def synthesize(text: str) -> np.ndarray:

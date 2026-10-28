@@ -34,7 +34,7 @@ class FakeOpenAI:
 
 
 def make(fake, **kwargs):
-    params = dict(model="auto", temperature=0.3, max_tokens=100, disable_thinking=True)
+    params: dict = dict(model="auto", temperature=0.3, max_tokens=100, disable_thinking=True)
     params.update(kwargs)
     return LlmClient(fake, **params)
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.stt import AudioError, SttEngine, decode_wav, normalize_level, split_at_pauses
+from app.stt import AudioError, SttEngine, decode_wav, normalize_level, resample, split_at_pauses
 
 SR = 16000
 
@@ -109,6 +109,25 @@ def test_garbage_bytes_give_audio_error():
     engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={})
     with pytest.raises(AudioError, match="прочитать"):
         engine.transcribe("это не аудио".encode())
+
+
+def test_resample_converts_length_and_keeps_16k_untouched():
+    wave = speech(1)
+    assert resample(wave, SR) is wave
+    assert len(resample(np.zeros(8000, dtype="float32"), 8000)) == 16000
+    assert resample(np.zeros(48000, dtype="float32"), 48000).dtype == np.float32
+
+
+def test_engine_resamples_to_16khz_before_recognition():
+    seen = []
+
+    def fake_recognize(chunk, sr):
+        seen.append((len(chunk), sr))
+        return "текст"
+
+    engine = SttEngine(fake_recognize, chunk_seconds=20, stt_fix={})
+    engine.transcribe(wav_bytes(np.zeros(8000, dtype="float32") + 0.1, sr=8000))
+    assert seen == [(16000, 16000)]
 
 
 def test_engine_skips_empty_chunks():

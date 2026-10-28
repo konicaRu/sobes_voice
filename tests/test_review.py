@@ -23,7 +23,7 @@ class FakeLlm:
 
 
 def valid_result(**overrides):
-    data = dict(
+    data: dict = dict(
         verdict="improve", score=3, strengths=["есть p-value"], issues=["нет размера выборки"],
         how_to_fix=["назвать MDE"], improved_outline="1. гипотеза 2. метрика", spoken_summary="Нужно больше конкретики.",
     )

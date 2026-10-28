@@ -13,7 +13,10 @@
 
 - `app/`: бэкенд FastAPI (этап 1). `main.py` (роуты, фабрика `create_app` с внедрением движков), `config.py`, `stt.py` (GigaAM, нарезка по паузам, выравнивание громкости), `tts.py` (Silero, кэш WAV на диске), `text_norm.py` (глоссарий, числа, транслитерация латиницы), `llm.py` (клиент LM Studio, JSON-схема, повторы, лог `data/logs/llm.jsonl`), `review.py` + `prompts/review.md`, `models.py`, `sample_questions.py` (3 вопроса-заглушки).
 - `static/`: `index.html`, `app.js`, `recorder-worklet.js`, `style.css` (запись через AudioWorklet, WAV 16 кГц mono в браузере).
-- `tests/`: pytest, 60 тестов; STT, TTS и LLM замоканы.
+- `tests/`: pytest, 80 тестов; STT, TTS и LLM замоканы.
+- `.claude/settings.json`: PostToolUse-хук (после правки `.py` прогоняет pytest через `scripts/hooks/pytest_on_py_edit.py`, лог в `data/logs/hook.log`).
+- `.claude/skills/git-save/`: скилл `/git-save` (тесты, pyright, обновление MEMORY/ARCHITECTURE/README, коммит, пуш); запускается только пользователем.
+- `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
 - `config.yaml`, `glossary.yaml`: настройки и глоссарий.
 - `requirements.txt`: закреплённые зависимости (torch только CPU).
 - `scripts/check_lmstudio.py`, `check_stt.py`, `check_tts.py`: проверка компонентов (этап 0).
@@ -28,6 +31,7 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe scripts\check_stt.py --wav data\check\tts.wav
 .\.venv\Scripts\python.exe scripts\check_lmstudio.py
 .\.venv\Scripts\python.exe -m pytest -q
+pyright                                   # из корня проекта, должно быть 0 errors
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000   # затем http://localhost:8000
 ```
 
@@ -39,6 +43,10 @@ py -3.11 -m venv .venv
 - LLM: `qwen2.5-14b-instruct-1m` Q4_K_M, контекст 8192 (в плане Qwen3-14B).
 
 ## Changelog
+### 2026-10-28 (автоматизация по рекомендациям)
+- Хук pytest после правки `.py`, скилл `/git-save`, `pyright` из корня проекта: 0 ошибок (было 20 замечаний по типам).
+- STT приводит любую допустимую частоту записи к 16 кГц (`resample`), `check_stt.py` использует тот же `SttEngine`. Тесты: 80.
+
 ### 2026-10-28 (security-ревью, второй проход)
 - `/transcribe`: тело читается потоком с лимитом; `decode_wav` проверяет заголовок (только WAV, частота, длительность) до декодирования. Тесты: 71.
 

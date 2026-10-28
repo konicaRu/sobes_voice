@@ -40,7 +40,7 @@ def main() -> int:
     from silero import silero_tts
 
     t0 = time.perf_counter()
-    model, _ = silero_tts(language="ru", speaker=config["model"])
+    model = silero_tts(language="ru", speaker=config["model"])[0]
     model.to(torch.device("cpu"))
     print(f"Модель {config['model']} загружена за {time.perf_counter() - t0:.1f} с")
 

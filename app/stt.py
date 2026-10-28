@@ -2,6 +2,7 @@ import io
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import soundfile as sf
@@ -20,6 +21,7 @@ class Transcription:
 
 
 MIN_SAMPLE_RATE, MAX_SAMPLE_RATE = 8000, 48000
+TARGET_SAMPLE_RATE: Literal[16000] = 16000  # браузер шлёт 16 кГц; остальные частоты приводим к ней
 RECORDING_MARGIN_S = 30  # запас сверх max_answer_seconds на задержку остановки записи
 
 
@@ -46,6 +48,15 @@ def decode_wav(data: bytes, max_seconds: float | None = None) -> tuple[np.ndarra
     except (sf.LibsndfileError, RuntimeError) as exc:
         raise AudioError("Не удалось прочитать запись. Попробуйте записать ответ ещё раз.") from exc
     return waveform.mean(axis=1).astype(np.float32), sr
+
+
+def resample(waveform: np.ndarray, sr: int) -> np.ndarray:
+    """Линейная передискретизация к 16 кГц (запасной путь: из браузера приходит уже 16 кГц)."""
+    if sr == TARGET_SAMPLE_RATE:
+        return waveform
+    length = round(len(waveform) * TARGET_SAMPLE_RATE / sr)
+    positions = np.linspace(0, len(waveform) - 1, length)
+    return np.interp(positions, np.arange(len(waveform)), waveform).astype(np.float32)
 
 
 def normalize_level(waveform: np.ndarray, target_peak: float = 0.9) -> np.ndarray:
@@ -86,11 +97,12 @@ class SttEngine:
     def transcribe(self, wav: bytes) -> Transcription:
         started = time.perf_counter()
         waveform, sr = decode_wav(wav, self._max_seconds)
-        waveform = normalize_level(waveform)
-        cuts = split_at_pauses(waveform, sr, self._chunk_seconds)
-        parts = (self._recognize(waveform[a:b], sr).strip() for a, b in cuts)
+        waveform = normalize_level(resample(waveform, sr))
+        cuts = split_at_pauses(waveform, TARGET_SAMPLE_RATE, self._chunk_seconds)
+        parts = (self._recognize(waveform[a:b], TARGET_SAMPLE_RATE).strip() for a, b in cuts)
         text = apply_stt_fixes(" ".join(p for p in parts if p), self._stt_fix)
-        return Transcription(text=text, seconds=len(waveform) / sr, elapsed=time.perf_counter() - started)
+        seconds = len(waveform) / TARGET_SAMPLE_RATE
+        return Transcription(text=text, seconds=seconds, elapsed=time.perf_counter() - started)
 
 
 def build_stt(config: Config, glossary: Glossary) -> SttEngine:
@@ -98,7 +110,7 @@ def build_stt(config: Config, glossary: Glossary) -> SttEngine:
 
     model = onnx_asr.load_model(config.stt.model)
     return SttEngine(
-        lambda chunk, sr: model.recognize(chunk, sample_rate=sr),
+        lambda chunk, sr: model.recognize(chunk, sample_rate=TARGET_SAMPLE_RATE),
         chunk_seconds=config.stt.chunk_seconds,
         stt_fix=glossary.stt_fix,
         max_seconds=config.stt.max_answer_seconds + RECORDING_MARGIN_S,
