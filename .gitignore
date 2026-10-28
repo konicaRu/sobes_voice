@@ -25,3 +25,6 @@ Thumbs.db
 
 # кэш пакета silero
 latest_silero_models.yml
+
+# ярлык с абсолютным путём создаётся локально
+*.lnk

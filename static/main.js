@@ -3,6 +3,7 @@ import { initHome, showHome } from './home.js';
 import { initInterview, startInterview } from './interview.js';
 import { initPrepare, openPrepare } from './prepare.js';
 import { finishSession, initReport, openReport } from './report.js';
+import { initSettings, openSettings } from './settings.js';
 import { $, json, jsonRequest, showError } from './ui.js';
 
 let currentInterviewId = null;
@@ -16,7 +17,8 @@ async function openInterviewPrepare(interviewId) {
 async function startSession(interviewId, mode = 'all') {
   currentInterviewId = interviewId;
   try {
-    await startInterview(await json(`/api/interviews/${interviewId}/sessions`, jsonRequest('POST', { mode })));
+    const shuffle = $('shuffle-check').checked;
+    await startInterview(await json(`/api/interviews/${interviewId}/sessions`, jsonRequest('POST', { mode, shuffle })));
   } catch (error) {
     showError(error.message);
   }
@@ -41,6 +43,7 @@ async function refreshStatus() {
 }
 
 initHome({ onOpen: openInterviewPrepare });
+initSettings({ onOpen: openSettings, onBack: showHome });
 initPrepare({
   onBack: showHome,
   onStart: (id) => startSession(id),

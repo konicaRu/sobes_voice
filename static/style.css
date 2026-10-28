@@ -210,3 +210,9 @@ button.icon { padding: 2px 8px; border-radius: 6px; font-size: 13px; }
 .matrix td.redo { background: color-mix(in srgb, var(--redo) 35%, var(--card)); }
 .matrix td.skipped, .matrix td.answered, .matrix td.new { background: var(--bg); color: var(--muted); }
 .toggles { margin-top: 16px; color: var(--muted); font-size: 14px; }
+
+header #settings-open-btn { margin-left: auto; margin-right: 16px; }
+.field { margin: 10px 0; }
+.field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 14px; }
+.field input[type="checkbox"] + * , .field label:has(input[type="checkbox"]) { color: inherit; }
+.field select { min-width: 260px; padding: 8px 10px; font: inherit; }

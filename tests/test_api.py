@@ -643,6 +643,17 @@ def test_weak_mode_creates_session_from_questions_with_improve_or_redo(make_clie
     assert [q["text"] for q in weak.json()["questions"]] == ["Первый вопрос?"]
 
 
+def test_shuffle_changes_question_order_and_renumbers_ids(make_client, monkeypatch):
+    monkeypatch.setattr("app.main.random.shuffle", lambda items: items.reverse())
+    client = make_client()
+    interview = new_interview(client)
+    approve(client, interview["id"])
+    plain = client.post(f"/api/interviews/{interview['id']}/sessions").json()["questions"]
+    shuffled = client.post(f"/api/interviews/{interview['id']}/sessions", json={"shuffle": True}).json()["questions"]
+    assert [q["text"] for q in shuffled] == [q["text"] for q in reversed(plain)]
+    assert [q["id"] for q in shuffled] == [q["id"] for q in plain]
+
+
 def test_weak_mode_without_weak_questions_is_409(make_client):
     client = make_client()
     interview = new_interview(client)

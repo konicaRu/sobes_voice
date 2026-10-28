@@ -35,10 +35,11 @@ export function jsonRequest(method, data) {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) };
 }
 
-const SCREENS = ['home', 'prepare', 'interview', 'finish', 'history'];
+const SCREENS = ['home', 'prepare', 'interview', 'finish', 'history', 'settings'];
 
 export function showScreen(name) {
   SCREENS.forEach((id) => { $(id).hidden = id !== name; });
+  $('settings-open-btn').hidden = name === 'interview' || name === 'settings'; // во время записи уходить с экрана нельзя
   showError('');
 }
 

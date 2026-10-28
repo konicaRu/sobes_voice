@@ -1,3 +1,4 @@
+import random
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -28,6 +29,16 @@ from app.report import (
     weak_questions,
 )
 from app.review import MAX_VACANCY_CHARS, review_answer
+from app.settings import (
+    RATES,
+    SPEAKERS,
+    SettingsUpdate,
+    apply_overrides,
+    apply_to_config,
+    apply_to_engines,
+    current_values,
+    save_overrides,
+)
 from app.storage import NotFoundError, Storage, StorageError
 from app.stt import AudioError, build_stt
 from app.tts import build_tts
@@ -52,6 +63,7 @@ class InterviewRequest(BaseModel):
 
 class SessionRequest(BaseModel):
     mode: Literal["all", "weak"] = "all"
+    shuffle: bool = False
 
 
 class SkipRequest(BaseModel):
@@ -110,6 +122,8 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     config = config or load_config()
     glossary = glossary or load_glossary()
     storage = storage or Storage(ROOT / config.paths.data_dir)
+    settings_path = storage.root.parent / "settings.json"
+    apply_overrides(config, settings_path)  # настройки со страницы «Настройки» важнее config.yaml
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -182,6 +196,30 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
         except Exception as exc:
             raise HTTPException(500, "Не удалось озвучить текст.") from exc
         return Response(audio, media_type="audio/wav")
+
+    # ---------- настройки ----------
+
+    def settings_payload() -> dict:
+        try:
+            models = app.state.llm.list_models()
+        except Exception:
+            models = []
+        return {
+            "values": current_values(config).model_dump(),
+            "choices": {"speakers": list(SPEAKERS), "rates": list(RATES), "models": models},
+            "stt": {"engine": config.stt.engine, "model": config.stt.model},
+        }
+
+    @app.get("/api/settings")
+    def get_settings():
+        return settings_payload()
+
+    @app.put("/api/settings")
+    def put_settings(body: SettingsUpdate):
+        apply_to_config(config, body)
+        apply_to_engines(config, body, app.state.tts, app.state.llm)
+        save_overrides(settings_path, body)
+        return settings_payload()
 
     # ---------- собеседования и документы ----------
 
@@ -338,6 +376,9 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             questions = weak_questions(storage.list_sessions(interview_id), approved)
             if not questions:
                 raise HTTPException(409, "Слабых вопросов нет: на всё отвечено хорошо или ответов ещё не было.")
+        if body is not None and body.shuffle:
+            questions = list(questions if questions is not None else approved)
+            random.shuffle(questions)
         session = storage.create_session(interview_id, questions=questions)
         return {
             "sid": session.sid,

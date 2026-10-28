@@ -52,12 +52,12 @@ class TtsEngine:
         self._sample_rate = sample_rate
         self._glossary = glossary
         self._cache_dir = cache_dir
-        self._voice_id = voice_id
+        self.voice_id = voice_id  # входит в ключ кэша; меняется со страницы настроек
         self._max_len = max_len
 
     def synthesize(self, text: str) -> bytes:
         spoken = normalize_for_tts(text, self._glossary)
-        key = hashlib.sha256(f"{self._voice_id}|{self._sample_rate}|{spoken}".encode()).hexdigest()
+        key = hashlib.sha256(f"{self.voice_id}|{self._sample_rate}|{spoken}".encode()).hexdigest()
         cached = self._cache_dir / f"{key}.wav"
         if cached.exists():
             return cached.read_bytes()

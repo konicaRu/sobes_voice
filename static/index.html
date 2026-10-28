@@ -4,11 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Тренажёр собеседований</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header>
     <h1>Тренажёр собеседований</h1>
+    <button id="settings-open-btn" class="link">Настройки</button>
     <div id="status" class="status" title="Состояние LM Studio"></div>
   </header>
 
@@ -90,6 +92,7 @@
       </div>
 
       <div class="actions">
+        <label class="muted"><input type="checkbox" id="shuffle-check"> Перемешать вопросы</label>
         <button id="history-open-btn">История сессий</button>
         <button id="weak-start-btn">Тренировать слабые</button>
         <button id="start-btn" class="primary" disabled>Начать собеседование</button>
@@ -199,6 +202,32 @@
         <h2>Динамика по вопросам</h2>
         <p class="muted">Оценка каждого вопроса от сессии к сессии. Цвет показывает вердикт.</p>
         <div id="history-matrix" class="matrix-wrap"></div>
+      </div>
+    </section>
+
+    <!-- Настройки -->
+    <section id="settings" hidden>
+      <button id="settings-back-btn" class="link">← На главную</button>
+      <h2 class="page-title">Настройки</h2>
+      <div class="card">
+        <h2>Голос</h2>
+        <div class="field"><label for="set-speaker">Голос</label><select id="set-speaker"></select></div>
+        <div class="field"><label for="set-rate">Темп речи</label><select id="set-rate"></select></div>
+        <div class="field"><label><input type="checkbox" id="set-speak-feedback"> Озвучивать фидбек</label></div>
+        <button id="set-test-voice-btn">Проверить голос</button>
+      </div>
+      <div class="card">
+        <h2>Модель LM Studio</h2>
+        <div class="field"><label for="set-model">Модель</label><select id="set-model"></select></div>
+        <div class="field"><label><input type="checkbox" id="set-no-think"> Отключить режим «thinking» (быстрее, рекомендуется)</label></div>
+      </div>
+      <div class="card">
+        <h2>Распознавание речи</h2>
+        <p id="set-stt" class="muted"></p>
+      </div>
+      <div class="row">
+        <button id="settings-save-btn" class="primary">Сохранить</button>
+        <span id="settings-status" class="muted"></span>
       </div>
     </section>
   </main>

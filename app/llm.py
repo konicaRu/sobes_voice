@@ -49,6 +49,17 @@ class LlmClient:
         self._log_path = log_path
         self._retries = retries
 
+    def configure(self, model: str, disable_thinking: bool) -> None:
+        self._model = model
+        self._disable_thinking = disable_thinking
+
+    def list_models(self) -> list[str]:
+        try:
+            ids = [m.id for m in self._client.models.list().data]
+        except Exception:
+            return []
+        return [i for i in ids if "embed" not in i.lower()]
+
     def get_model(self) -> str:
         if self._model != "auto":
             return self._model
