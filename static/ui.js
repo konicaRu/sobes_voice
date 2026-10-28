@@ -6,7 +6,13 @@ export function showError(message) {
   const box = $('error');
   box.textContent = message;
   box.hidden = !message;
+  if (message) box.scrollIntoView({ behavior: 'smooth', block: 'center' }); // ошибка не должна оставаться за кадром
 }
+
+// FastAPI отвечает так, когда такого адреса нет в запущенном коде: сервер не перезапущен после обновления
+const STALE_SERVER_DETAILS = ['Method Not Allowed', 'Not Found'];
+const STALE_SERVER_MESSAGE =
+  'Сервер запущен на старой версии кода. Остановите его (Ctrl+C в окне PowerShell) и запустите заново, затем обновите страницу.';
 
 export async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -14,7 +20,8 @@ export async function api(path, options = {}) {
     let detail = `Ошибка сервера (${response.status})`;
     try {
       const body = await response.json();
-      if (typeof body.detail === 'string') detail = body.detail;
+      if (STALE_SERVER_DETAILS.includes(body.detail)) detail = STALE_SERVER_MESSAGE;
+      else if (typeof body.detail === 'string') detail = body.detail;
       else if (Array.isArray(body.detail)) detail = 'Некорректные данные. Проверьте введённые значения.';
     } catch { /* ответ не JSON */ }
     throw new Error(detail);

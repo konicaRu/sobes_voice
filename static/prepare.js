@@ -32,7 +32,7 @@ function renderSlots() {
     input.multiple = true;
     input.accept = '.md,.txt,.docx,.pdf';
     input.addEventListener('change', () => uploadFiles(slot, [...input.files]));
-    card.append(input);
+    card.append(input, pasteBlock(slot));
     return card;
   }));
   $('parse-btn').disabled = ctx.documents.questions.length === 0;
@@ -68,6 +68,51 @@ async function saveProfile() {
   } catch (error) {
     showError(error.message);
   }
+}
+
+// Вставка текста вместо загрузки файла: сохраняется как md-документ слота. Черновик не теряется при перерисовке.
+function pasteBlock(slot) {
+  const details = element('details', 'paste');
+  details.open = Boolean(ctx.paste[slot]?.open);
+  details.append(element('summary', '', 'Вставить текст'));
+  const text = element('textarea');
+  text.rows = 5;
+  text.placeholder = 'Вставьте текст сюда (скопированный из документа, письма или заметок)';
+  text.value = ctx.paste[slot]?.text || '';
+  text.addEventListener('input', () => { ctx.paste[slot] = { open: true, text: text.value }; });
+  details.addEventListener('toggle', () => { ctx.paste[slot] = { text: ctx.paste[slot]?.text || '', open: details.open }; });
+  const add = element('button', '', 'Добавить текст');
+  add.addEventListener('click', () => addText(slot, text.value));
+  details.append(text, add);
+  return details;
+}
+
+async function addText(slot, text) {
+  showError('');
+  const body = text.trim();
+  if (!body) {
+    showError('Вставьте текст перед добавлением.');
+    return;
+  }
+  const blob = new Blob([body], { type: 'text/markdown' });
+  if (blob.size > MAX_UPLOAD_BYTES) {
+    showError('Текст слишком большой (максимум 5 МБ).');
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 19).replace('T', ' ').replace(/:/g, '-');
+  const filename = `Текст ${SLOTS[slot].label.toLowerCase()} ${stamp}.md`;
+  try {
+    await api(`/api/interviews/${ctx.id}/documents?slot=${slot}&filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob,
+    });
+  } catch (error) {
+    showError(error.message);
+    return;
+  }
+  ctx.paste[slot] = { open: false, text: '' };
+  await refreshDocuments();
 }
 
 async function refreshDocuments() {
@@ -215,6 +260,7 @@ export async function openPrepare(interviewId) {
       draft: (details.questions || []).map(toDraft),
       approvedCount: details.questions ? details.questions.length : 0,
       dirty: false,
+      paste: {},
     };
     $('prepare-title').textContent = details.interview.title;
     $('profile-text').value = details.profile || '';

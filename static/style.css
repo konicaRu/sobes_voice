@@ -148,6 +148,9 @@ textarea { width: 100%; resize: vertical; }
 .slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
 .slot { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--bg); }
 .slot input[type="file"] { margin-top: 8px; max-width: 100%; font-size: 13px; }
+.paste { margin-top: 10px; }
+.paste summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.paste textarea { margin: 8px 0; font-size: 14px; }
 .file-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 14px; word-break: break-all; }
 
 button.icon { padding: 2px 8px; border-radius: 6px; font-size: 13px; }
