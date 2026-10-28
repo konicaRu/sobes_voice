@@ -26,7 +26,15 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe scripts\check_lmstudio.py
 ```
 
+## Отклонения от PLAN.md
+- STT: вместо Silero VAD длинные ответы режутся по паузам на куски ~20 с (`chunk_seconds`). Причина: VAD терял речь на тихих записях.
+- TTS: модель `v5_6_ru` (в плане `v5_5_ru`), темп через SSML (`tts.rate`).
+- LLM: `qwen2.5-14b-instruct-1m` Q4_K_M, контекст 8192 (в плане Qwen3-14B).
+
 ## Changelog
+### 2026-10-28 (этап 0, проверки)
+- `check_stt.py`: нарезка по паузам вместо VAD; `check_tts.py`: параметр `--rate`; `config.yaml`: `tts.rate`, `stt.chunk_seconds`; глоссарий пополнен.
+
 ### 2026-10-28 (этап 0)
 - Добавлены каркас окружения, конфиги и три check-скрипта.
 - TTS-модель в конфиге `v5_6_ru` вместо `v5_5_ru` из PLAN.md.

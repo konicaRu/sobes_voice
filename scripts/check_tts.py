@@ -28,6 +28,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text", default=DEFAULT_TEXT)
     parser.add_argument("--speaker", help="aidar | baya | kseniya | xenia | eugene")
+    parser.add_argument("--rate", help="темп (SSML): x-slow | slow | medium | fast | x-fast")
     parser.add_argument("--out", type=Path, default=ROOT / "data" / "check" / "tts.wav")
     args = parser.parse_args()
 
@@ -47,7 +48,9 @@ def main() -> int:
     print(f"Текст для синтеза: {text}")
 
     t0 = time.perf_counter()
-    audio = model.apply_tts(text=text, speaker=speaker, sample_rate=config["sample_rate"])
+    rate = args.rate or config["rate"]
+    ssml = f'<speak><prosody rate="{rate}">{text}</prosody></speak>'
+    audio = model.apply_tts(ssml_text=ssml, speaker=speaker, sample_rate=config["sample_rate"])
     elapsed = time.perf_counter() - t0
     seconds = len(audio) / config["sample_rate"]
 

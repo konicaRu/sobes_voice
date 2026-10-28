@@ -9,12 +9,13 @@ lmstudio:
 stt:
   engine: gigaam         # gigaam | whisper
   model: gigaam-v3-e2e-rnnt
-  use_vad: true
+  chunk_seconds: 20      # длинные ответы режутся по паузам на куски ~20 с (Silero VAD терял речь на тихих записях)
   max_answer_seconds: 300
 tts:
   engine: silero
   model: v5_6_ru         # в PLAN.md был v5_5_ru; v5_6_ru новее (проверено по silero-models)
   speaker: eugene        # aidar | baya | kseniya | xenia | eugene
+  rate: slow             # темп (SSML): x-slow | slow | medium | fast | x-fast
   sample_rate: 48000
   speak_feedback: true
 session:

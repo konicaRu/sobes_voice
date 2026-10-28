@@ -24,12 +24,29 @@ def record(seconds: int, out: Path) -> Path:
     return out
 
 
+def split_at_pauses(waveform: np.ndarray, sr: int, target_s: float, search_s: float = 6.0, frame_ms: int = 50):
+    """Режет запись на куски ~target_s; разрез в самом тихом кадре окна [target-search, target].
+
+    Заменяет Silero VAD: на тихих записях VAD терял всё после первых ~25 с.
+    """
+    frame = int(sr * frame_ms / 1000)
+    target, search = int(target_s * sr), int(search_s * sr)
+    cuts, start = [], 0
+    while len(waveform) - start > target:
+        lo, hi = start + target - search, start + target
+        frames = waveform[lo:hi][: (hi - lo) // frame * frame].reshape(-1, frame)
+        cut = lo + int(np.sqrt((frames ** 2).mean(axis=1)).argmin()) * frame + frame // 2
+        cuts.append((start, cut))
+        start = cut
+    cuts.append((start, len(waveform)))
+    return cuts
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--wav", type=Path, help="путь к WAV-файлу")
     group.add_argument("--record", type=int, metavar="N", help="записать N секунд с микрофона")
-    parser.add_argument("--no-vad", action="store_true", help="не резать по паузам (для коротких записей)")
     args = parser.parse_args()
 
     config = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))["stt"]
@@ -46,19 +63,13 @@ def main() -> int:
     model = onnx_asr.load_model(config["model"])
     print(f"Модель {config['model']} загружена за {time.perf_counter() - t0:.1f} с")
 
-    use_vad = config["use_vad"] and not args.no_vad
-    if use_vad:
-        model = model.with_vad(onnx_asr.load_vad("silero"))
-
     t0 = time.perf_counter()
-    if use_vad:
-        text = " ".join(seg.text for seg in model.recognize(waveform, sample_rate=sr))
-    else:
-        text = model.recognize(waveform, sample_rate=sr)
+    cuts = split_at_pauses(waveform, sr, config["chunk_seconds"])
+    text = " ".join(model.recognize(waveform[a:b], sample_rate=sr) for a, b in cuts)
     elapsed = time.perf_counter() - t0
 
     print(f"\nТекст: {text}\n")
-    print(f"Распознано {seconds:.1f} с речи за {elapsed:.1f} с (x{seconds / elapsed:.1f} к реальному времени, VAD={'вкл' if use_vad else 'выкл'})")
+    print(f"Распознано {seconds:.1f} с речи за {elapsed:.1f} с (x{seconds / elapsed:.1f} к реальному времени, кусков: {len(cuts)})")
     return 0
 
 

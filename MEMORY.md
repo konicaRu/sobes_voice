@@ -23,6 +23,14 @@
 | fewer-permission-prompts | позже |
 
 ## Лог сессий
+### 2026-10-28 (этап 0, проверки пользователем)
+- LM Studio: `qwen2.5-14b-instruct-1m` Q4_K_M. Контекст 32k давал 9 ток/с и разбор 39 с; **контекст 8192 даёт 22.8 ток/с и разбор 12.4 с**. `json_schema` работает. Решение: остаёмся на этой модели, контекст 8192 (Qwen3-14B не качаем).
+- TTS: голос eugene, темп `slow` (SSML prosody) одобрен пользователем → `tts.rate: slow` в config.yaml.
+- STT на живом голосе: короткий ответ (10 с) хорошо. **Silero VAD на тихой 90-секундной записи терял речь после ~25 с** (8–19 слов вместо ~200, нормализация и пороги не помогли). Заменён нарезкой по паузам: окна ~20 с, разрез в самом тихом кадре (`split_at_pauses` в check_stt.py): 90 с за 2.8 с, текст полный. Отклонение от PLAN.md (там VAD), в `config.yaml` теперь `chunk_seconds: 20`.
+- Типичные ошибки GigaAM: английские термины (A/B, SQL, p-value, bootstrap, guardrail, CUPED). Часть закрыта `stt_fix` в glossary.yaml.
+- Запись пользователя тихая (RMS ~0.008): на этапе 1 в браузере нормализовать громкость перед STT.
+- Вывод Python в PowerShell 5.1 через пайп ломает кириллицу: для диагностики писать в файл UTF-8.
+
 ### 2026-10-28 (этап 0)
 - Создан `.venv` (Python 3.11.9), `requirements.txt` с закреплёнными версиями (torch 2.14.1+cpu), `config.yaml`, `glossary.yaml`, `pyrightconfig.json`.
 - Скрипты `scripts/check_tts.py`, `check_stt.py`, `check_lmstudio.py`.
