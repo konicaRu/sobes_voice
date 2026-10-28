@@ -1,9 +1,7 @@
-'use strict';
+import { $, api, json, showError, showScreen } from './ui.js';
 
 const TARGET_RATE = 16000;
 const VERDICTS = { ok: 'Хорошо', improve: 'Доработать', redo: 'Переделать' };
-
-const $ = (id) => document.getElementById(id);
 
 const state = {
   sid: null,
@@ -17,23 +15,7 @@ const state = {
   timer: null,
 };
 
-// ---------- утилиты ----------
-
-function showError(message) {
-  const box = $('error');
-  box.textContent = message;
-  box.hidden = !message;
-}
-
-async function api(path, options = {}) {
-  const response = await fetch(path, options);
-  if (!response.ok) {
-    let detail = `Ошибка сервера (${response.status})`;
-    try { detail = (await response.json()).detail || detail; } catch { /* не JSON */ }
-    throw new Error(detail);
-  }
-  return response;
-}
+let callbacks = { onBack: () => {}, onRestart: () => {} };
 
 function fillList(id, items) {
   const list = $(id);
@@ -42,7 +24,7 @@ function fillList(id, items) {
     li.textContent = text;
     return li;
   }));
-  $(id).parentElement.hidden = items.length === 0;
+  list.parentElement.hidden = items.length === 0;
 }
 
 function formatTime(seconds) {
@@ -53,7 +35,7 @@ function formatTime(seconds) {
 
 // ---------- состояния интерфейса ----------
 
-function setPhase(phase, label) {
+function setPhase(phase) {
   state.phase = phase;
   const mic = $('mic-btn');
   mic.classList.toggle('recording', phase === 'recording');
@@ -66,12 +48,14 @@ function setPhase(phase, label) {
     reviewing: 'Анализирую…',
     'feedback-speaking': 'Озвучиваю…',
   };
-  mic.textContent = label || labels[phase];
+  mic.textContent = labels[phase];
   mic.disabled = !['idle', 'recording'].includes(phase);
   const free = phase === 'idle';
-  $('retry-btn').disabled = !free || $('transcript-card').hidden;
-  $('next-btn').disabled = !free || $('transcript-card').hidden;
+  const answered = !$('transcript-card').hidden;
+  $('retry-btn').disabled = !free || !answered;
+  $('next-btn').disabled = !free || !answered;
   $('repeat-btn').disabled = !free;
+  $('back-btn').disabled = !free;
 }
 
 function renderQuestion() {
@@ -224,21 +208,21 @@ async function processAnswer(wav) {
   const q = state.index;
   try {
     setPhase('transcribing');
-    const transcription = await (await api(`/api/sessions/${state.sid}/transcribe?q=${q}`, {
+    const transcription = await json(`/api/sessions/${state.sid}/transcribe?q=${q}`, {
       method: 'POST',
       headers: { 'Content-Type': 'audio/wav' },
       body: wav,
-    })).json();
+    });
     $('transcript').textContent = transcription.text;
     $('transcript-card').hidden = false;
     $('feedback-card').hidden = true;
 
     setPhase('reviewing');
-    const review = await (await api(`/api/sessions/${state.sid}/review`, {
+    const review = await json(`/api/sessions/${state.sid}/review`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ q }),
-    })).json();
+    });
     renderFeedback(review);
 
     if ($('speak-feedback').checked) {
@@ -258,27 +242,17 @@ function toggleRecording() {
 
 // ---------- навигация ----------
 
-async function startSession() {
-  showError('');
-  try {
-    const session = await (await api('/api/sessions', { method: 'POST' })).json();
-    Object.assign(state, { sid: session.sid, questions: session.questions, index: 0, settings: session.settings });
-  } catch (error) {
-    showError(error.message);
-    return;
-  }
-  $('speak-feedback').checked = state.settings.speak_feedback;
-  $('start-screen').hidden = true;
-  $('finish-screen').hidden = true;
-  $('interview').hidden = false;
+export async function startInterview(session) {
+  Object.assign(state, { sid: session.sid, questions: session.questions, index: 0, settings: session.settings });
+  $('speak-feedback').checked = session.settings.speak_feedback;
+  showScreen('interview');
   renderQuestion();
   await speakQuestion();
 }
 
 async function nextQuestion() {
   if (state.index + 1 >= state.questions.length) {
-    $('interview').hidden = true;
-    $('finish-screen').hidden = false;
+    showScreen('finish');
     return;
   }
   state.index += 1;
@@ -286,49 +260,32 @@ async function nextQuestion() {
   await speakQuestion();
 }
 
-async function refreshStatus() {
-  const status = $('status');
-  try {
-    const health = await (await api('/api/health')).json();
-    const lm = health.lmstudio;
-    status.className = `status ${lm.ok ? 'ok' : 'bad'}`;
-    status.textContent = lm.ok ? `LM Studio: ${lm.model}` : 'LM Studio недоступен';
-    if (!lm.ok) showError(lm.error);
-  } catch (error) {
-    status.className = 'status bad';
-    status.textContent = 'Сервер недоступен';
-  }
+export function initInterview({ onBack, onRestart }) {
+  callbacks = { onBack, onRestart };
+  $('mic-btn').addEventListener('click', toggleRecording);
+  $('repeat-btn').addEventListener('click', speakQuestion);
+  $('retry-btn').addEventListener('click', () => {
+    $('transcript-card').hidden = true;
+    $('feedback-card').hidden = true;
+    setPhase('idle');
+    startRecording();
+  });
+  $('next-btn').addEventListener('click', nextQuestion);
+  $('back-btn').addEventListener('click', () => callbacks.onBack());
+  $('finish-back-btn').addEventListener('click', () => callbacks.onBack());
+  $('restart-btn').addEventListener('click', () => callbacks.onRestart());
+  $('toggle-text-btn').addEventListener('click', () => {
+    state.textVisible = !state.textVisible;
+    applyTextVisibility();
+  });
+
+  const isTypingTarget = (target) => ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+  document.addEventListener('keydown', (event) => {
+    if (event.code !== 'Space' || isTypingTarget(event.target) || $('interview').hidden) return;
+    event.preventDefault();
+    if (!event.repeat) toggleRecording();
+  });
+  document.addEventListener('keyup', (event) => {
+    if (event.code === 'Space' && !isTypingTarget(event.target)) event.preventDefault();
+  });
 }
-
-// ---------- события ----------
-
-$('start-btn').addEventListener('click', startSession);
-$('restart-btn').addEventListener('click', startSession);
-$('mic-btn').addEventListener('click', toggleRecording);
-$('repeat-btn').addEventListener('click', speakQuestion);
-$('retry-btn').addEventListener('click', () => {
-  $('transcript-card').hidden = true;
-  $('feedback-card').hidden = true;
-  setPhase('idle');
-  startRecording();
-});
-$('next-btn').addEventListener('click', nextQuestion);
-$('toggle-text-btn').addEventListener('click', () => {
-  state.textVisible = !state.textVisible;
-  applyTextVisibility();
-});
-
-function isTypingTarget(target) {
-  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
-}
-
-document.addEventListener('keydown', (event) => {
-  if (event.code !== 'Space' || isTypingTarget(event.target) || $('interview').hidden) return;
-  event.preventDefault();
-  if (!event.repeat) toggleRecording();
-});
-document.addEventListener('keyup', (event) => {
-  if (event.code === 'Space' && !isTypingTarget(event.target)) event.preventDefault();
-});
-
-refreshStatus();

@@ -15,13 +15,59 @@
   <main>
     <div id="error" class="error" hidden></div>
 
-    <section id="start-screen" class="card">
-      <p>Три вопроса для проверки голосового цикла. Нажмите «Начать»: интервьюер озвучит вопрос, затем вы отвечаете голосом.</p>
-      <button id="start-btn" class="primary">Начать</button>
+    <!-- Список собеседований -->
+    <section id="home">
+      <div class="card">
+        <h2>Новое собеседование</h2>
+        <form id="create-form" class="row">
+          <input id="new-title" type="text" maxlength="100" placeholder="Например: Т2 — продуктовый аналитик" required>
+          <button type="submit" class="primary">Создать</button>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Мои собеседования</h2>
+        <p id="home-empty" class="muted">Пока ничего нет. Создайте первое собеседование выше.</p>
+        <div id="interview-list"></div>
+      </div>
     </section>
 
+    <!-- Подготовка -->
+    <section id="prepare" hidden>
+      <button id="back-home-btn" class="link">← К списку собеседований</button>
+      <h2 id="prepare-title" class="page-title"></h2>
+
+      <div class="card">
+        <h2>Документы</h2>
+        <p class="muted">Файлы md, txt, docx или pdf, до 5 МБ. В каждый слот можно загрузить несколько файлов.</p>
+        <div id="slots" class="slots"></div>
+      </div>
+
+      <div class="card">
+        <h2>Вопросы</h2>
+        <p class="muted">Загрузите файл в слот «Вопросы» и нажмите «Извлечь вопросы», либо добавьте вопросы вручную. Затем проверьте список и утвердите его.</p>
+        <div class="row">
+          <button id="parse-btn" disabled>Извлечь вопросы из файла</button>
+          <button id="add-question-btn">Добавить вопрос</button>
+        </div>
+        <p id="questions-empty" class="muted">Список пуст.</p>
+        <div id="questions-editor"></div>
+        <div class="row">
+          <button id="approve-btn" class="primary">Утвердить список</button>
+          <span id="approve-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button id="start-btn" class="primary" disabled>Начать собеседование</button>
+      </div>
+    </section>
+
+    <!-- Собеседование -->
     <section id="interview" hidden>
-      <div class="progress" id="progress"></div>
+      <div class="question-head">
+        <div class="progress" id="progress"></div>
+        <button id="back-btn" class="link">К подготовке</button>
+      </div>
 
       <div class="card">
         <div class="question-head">
@@ -64,13 +110,17 @@
       </div>
     </section>
 
-    <section id="finish-screen" class="card" hidden>
+    <!-- Завершение -->
+    <section id="finish" class="card" hidden>
       <h2>Готово</h2>
       <p>Вы прошли все вопросы. Итоговый отчёт появится на этапе 5.</p>
-      <button id="restart-btn" class="primary">Пройти заново</button>
+      <div class="row">
+        <button id="restart-btn" class="primary">Пройти заново</button>
+        <button id="finish-back-btn">К подготовке</button>
+      </div>
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <script type="module" src="main.js"></script>
 </body>
 </html>

@@ -19,8 +19,20 @@
 - `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
 - `config.yaml`, `glossary.yaml`: настройки и глоссарий.
 - `requirements.txt`: закреплённые зависимости (torch только CPU).
-- `scripts/check_lmstudio.py`, `check_stt.py`, `check_tts.py`: проверка компонентов (этап 0).
-- `pyrightconfig.json`: Pyright видит `.venv`.
+- `scripts/check_lmstudio.py`, `check_stt.py`, `check_tts.py`: проверка компонентов (этап 0); `scripts/hooks/`: скрипт хука.
+
+## Данные на диске (`data/`, в .gitignore)
+```
+data/interviews/<id>/
+  interview.json
+  docs/<questions|vacancy|resume|cases>/<файлы>
+  questions.json                     # утверждённый список
+  sessions/<ГГГГММДД-ЧЧММСС>/
+    session.json                     # вопросы-снимок, попытки, разборы
+    audio/q01_a1.wav
+data/cache/tts/, data/logs/, data/check/
+```
+`<id>` — латинский slug из названия (`t2-produktovyi-analitik`), id сессии: `<id>__<ГГГГММДД-ЧЧММСС>`.
 
 ## Команды (PowerShell, из корня проекта)
 ```powershell
@@ -35,14 +47,18 @@ pyright                                   # из корня проекта, до
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000   # затем http://localhost:8000
 ```
 
-Сессии на этапе 1 хранятся только в памяти сервера; модели грузятся при старте (около 15 с).
+Модели грузятся при старте сервера (около 15 с). Сессии, попытки и аудио сохраняются на диск сразу, после перезапуска всё на месте.
 
 ## Отклонения от PLAN.md
 - STT: вместо Silero VAD длинные ответы режутся по паузам на куски ~20 с (`chunk_seconds`). Причина: VAD терял речь на тихих записях.
 - TTS: модель `v5_6_ru` (в плане `v5_5_ru`), темп через SSML (`tts.rate`).
 - LLM: `qwen2.5-14b-instruct-1m` Q4_K_M, контекст 8192 (в плане Qwen3-14B).
+- API (этап 2): файлы загружаются сырым телом запроса (`?slot=&filename=`), а не multipart; нечитаемый файл отклоняется до сохранения. `POST /api/sessions` этапа 1 убран, сессия создаётся через `POST /api/interviews/{id}/sessions` только при утверждённом списке. «Пропустить» и `/next` пока нет (навигация на клиенте).
 
 ## Changelog
+### 2026-10-28 (этап 2)
+- Собеседования, документы по слотам, парсер вопросов, редактор списка, хранение на диске (`storage.py`), экран «Подготовка» и список собеседований; `app.js` разбит на ES-модули. Заглушки `sample_questions.py` удалены. Тесты: 149.
+
 ### 2026-10-28 (автоматизация по рекомендациям)
 - Хук pytest после правки `.py`, скилл `/git-save`, `pyright` из корня проекта: 0 ошибок (было 20 замечаний по типам).
 - STT приводит любую допустимую частоту записи к 16 кГц (`resample`), `check_stt.py` использует тот же `SttEngine`. Тесты: 80.

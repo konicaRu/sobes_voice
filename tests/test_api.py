@@ -7,12 +7,18 @@ from app.config import Config, Glossary, SttConfig
 from app.llm import LlmError
 from app.main import create_app
 from app.review import ReviewResult
+from app.storage import Storage
 from app.stt import AudioError, Transcription
 
 RESULT = ReviewResult(
     verdict="improve", score=3, strengths=["есть пример"], issues=["нет цифр"],
     how_to_fix=["назвать цифры"], improved_outline="1. контекст 2. цифры", spoken_summary="Добавьте цифры.",
 )
+QUESTIONS = [
+    {"text": "Первый вопрос?", "what_to_check": ["критерий"]},
+    {"text": "Второй вопрос?"},
+    {"text": "Третий вопрос?"},
+]
 
 
 class FakeStt:
@@ -49,73 +55,261 @@ class FakeLlm:
         return RESULT
 
 
-def make_client(stt=None, tts=None, llm=None, config=None):
-    app = create_app(
-        config=config or Config(), glossary=Glossary(),
-        stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(),
+@pytest.fixture
+def make_client(tmp_path):
+    def factory(stt=None, tts=None, llm=None, config=None):
+        app = create_app(
+            config=config or Config(), glossary=Glossary(), storage=Storage(tmp_path),
+            stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(),
+        )
+        return TestClient(app)
+
+    return factory
+
+
+def new_interview(client, title="Т2 — аналитик"):
+    return client.post("/api/interviews", json={"title": title}).json()
+
+
+def approve(client, interview_id, questions=QUESTIONS):
+    return client.put(f"/api/interviews/{interview_id}/questions", json={"questions": questions})
+
+
+def upload(client, interview_id, slot, filename, content):
+    return client.post(
+        f"/api/interviews/{interview_id}/documents", params={"slot": slot, "filename": filename}, content=content
     )
-    return TestClient(app)
 
 
 def new_session(client):
-    return client.post("/api/sessions").json()
+    interview = new_interview(client)
+    approve(client, interview["id"])
+    return client.post(f"/api/interviews/{interview['id']}/sessions").json()
 
 
-def test_health_reports_model():
+# ---------- здоровье и озвучка ----------
+
+def test_health_reports_model(make_client):
     body = make_client().get("/api/health").json()
     assert body["lmstudio"] == {"ok": True, "model": "qwen-test", "error": None}
     assert body["stt"]["ok"] and body["tts"]["ok"]
 
 
-def test_health_reports_llm_error_without_failing():
+def test_health_reports_llm_error_without_failing(make_client):
     client = make_client(llm=FakeLlm(error=LlmError("LM Studio не отвечает.")))
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["lmstudio"] == {"ok": False, "model": None, "error": "LM Studio не отвечает."}
 
 
-def test_create_session_returns_three_questions():
+def test_tts_returns_wav(make_client):
+    tts = FakeTts()
+    response = make_client(tts=tts).post("/api/tts", json={"text": "Привет"})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFFfake-wav"
+    assert tts.texts == ["Привет"]
+
+
+def test_tts_failure_is_500_with_russian_message(make_client):
+    class BrokenTts:
+        def synthesize(self, text):
+            raise ValueError("Failed to parse SSML")
+
+    response = make_client(tts=BrokenTts()).post("/api/tts", json={"text": "Привет"})
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Не удалось озвучить текст."
+
+
+def test_tts_rejects_overlong_text(make_client):
+    assert make_client().post("/api/tts", json={"text": "а" * 2001}).status_code == 422
+
+
+def test_tts_rejects_empty_text(make_client):
+    assert make_client().post("/api/tts", json={"text": ""}).status_code == 422
+
+
+def test_index_page_is_served(make_client):
+    response = make_client().get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+
+
+# ---------- собеседования и документы ----------
+
+def test_create_and_list_interviews(make_client):
+    client = make_client()
+    created = new_interview(client)
+    assert created["title"] == "Т2 — аналитик"
+    listed = client.get("/api/interviews").json()
+    assert [i["id"] for i in listed] == [created["id"]]
+    assert listed[0]["questions"] is None
+    assert listed[0]["documents"] == {"questions": 0, "vacancy": 0, "resume": 0, "cases": 0}
+
+
+def test_empty_interview_title_is_422(make_client):
+    assert make_client().post("/api/interviews", json={"title": "  "}).status_code == 422
+
+
+def test_unknown_or_malicious_interview_is_404(make_client):
+    client = make_client()
+    assert client.get("/api/interviews/nope").status_code == 404
+    assert client.get("/api/interviews/..%2F..%2Fetc").status_code == 404
+
+
+def test_upload_document_and_show_in_interview(make_client):
+    client = make_client()
+    interview = new_interview(client)
+    response = upload(client, interview["id"], "vacancy", "вакансия.md", "Нужен аналитик".encode())
+    assert response.status_code == 200
+    assert response.json() == {"filename": "вакансия.md"}
+    details = client.get(f"/api/interviews/{interview['id']}").json()
+    assert details["documents"]["vacancy"] == ["вакансия.md"]
+    assert details["questions"] is None
+
+
+def test_upload_rejects_unsupported_file_unknown_slot_and_unreadable_file(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    assert upload(client, interview_id, "vacancy", "script.py", b"x").status_code == 422
+    assert upload(client, interview_id, "secrets", "a.md", b"x").status_code == 422
+    bad = upload(client, interview_id, "resume", "cv.docx", b"not a docx")
+    assert bad.status_code == 422 and "прочитать" in bad.json()["detail"]
+    assert client.get(f"/api/interviews/{interview_id}").json()["documents"]["resume"] == []
+
+
+def test_upload_rejects_oversized_body_with_413(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    response = upload(client, interview_id, "cases", "big.txt", b"a" * (5 * 1024 * 1024 + 1))
+    assert response.status_code == 413
+
+
+def test_delete_document(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "cases", "кейс.md", b"x")
+    assert client.delete(f"/api/interviews/{interview_id}/documents/cases/кейс.md").status_code == 200
+    assert client.get(f"/api/interviews/{interview_id}").json()["documents"]["cases"] == []
+    assert client.delete(f"/api/interviews/{interview_id}/documents/cases/кейс.md").status_code == 404
+
+
+# ---------- вопросы ----------
+
+def test_parse_questions_from_uploaded_file(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "questions", "q.md", "1. Что такое SRM?\n   - Критерии: пропорции".encode())
+    response = client.post(f"/api/interviews/{interview_id}/questions/parse")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["files"] == ["q.md"]
+    assert body["questions"][0]["text"] == "Что такое SRM?"
+    assert body["questions"][0]["what_to_check"] == ["пропорции"]
+    assert client.get(f"/api/interviews/{interview_id}/questions").json() == {"questions": None}  # ещё не утверждены
+
+
+def test_parse_merges_several_files_without_duplicates(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "questions", "a.md", "1. Что такое SRM?\n2. Что такое MDE?".encode())
+    upload(client, interview_id, "questions", "b.txt", "Что такое srm?\nЧто такое CUPED?".encode())
+    questions = client.post(f"/api/interviews/{interview_id}/questions/parse").json()["questions"]
+    assert [q["text"] for q in questions] == ["Что такое SRM?", "Что такое MDE?", "Что такое CUPED?"]
+    assert [q["id"] for q in questions] == ["q01", "q02", "q03"]
+
+
+def test_parse_without_files_is_409_and_without_questions_is_422(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    assert client.post(f"/api/interviews/{interview_id}/questions/parse").status_code == 409
+    upload(client, interview_id, "questions", "empty.md", "Просто текст.".encode())
+    response = client.post(f"/api/interviews/{interview_id}/questions/parse")
+    assert response.status_code == 422 and "вопрос" in response.json()["detail"]
+
+
+def test_approve_questions_renumbers_ids_and_saves(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    response = approve(client, interview_id, [{"id": "zzz", "text": "  Первый?  ", "what_to_check": [" а ", " "]}, {"text": "Второй?"}])
+    assert response.status_code == 200
+    saved = response.json()["questions"]
+    assert [(q["id"], q["text"]) for q in saved] == [("q01", "Первый?"), ("q02", "Второй?")]
+    assert saved[0]["what_to_check"] == ["а"]
+    assert client.get(f"/api/interviews/{interview_id}/questions").json()["questions"] == saved
+    assert client.get("/api/interviews").json()[0]["questions"] == 2
+
+
+def test_approve_rejects_empty_blank_and_too_many_questions(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    assert approve(client, interview_id, []).status_code == 422
+    assert approve(client, interview_id, [{"text": "   "}]).status_code == 422
+    assert approve(client, interview_id, [{"text": "в?"}] * 201).status_code == 422
+
+
+# ---------- сессии ----------
+
+def test_session_requires_approved_questions(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    response = client.post(f"/api/interviews/{interview_id}/sessions")
+    assert response.status_code == 409 and "Утвердите" in response.json()["detail"]
+
+
+def test_create_session_returns_questions_and_settings(make_client):
     session = new_session(make_client())
     assert session["sid"]
-    assert len(session["questions"]) == 3
-    assert all(q["id"] and q["text"] for q in session["questions"])
+    assert [q["text"] for q in session["questions"]] == ["Первый вопрос?", "Второй вопрос?", "Третий вопрос?"]
+    assert session["settings"]["max_answer_seconds"] == 300
 
 
-def test_transcribe_returns_text():
+def test_transcribe_saves_attempt_and_audio_on_disk(make_client, tmp_path):
     client = make_client()
     sid = new_session(client)["sid"]
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"wav-bytes")
     assert response.status_code == 200
     assert response.json()["text"] == "мой ответ"
+    attempt = client.get(f"/api/sessions/{sid}").json()["attempts"][0]
+    assert (attempt["q"], attempt["n"], attempt["text"]) == (0, 1, "мой ответ")
+    assert attempt["audio"] == "audio/q01_a1.wav"
+    audio_files = list(tmp_path.rglob("q01_a1.wav"))
+    assert len(audio_files) == 1 and audio_files[0].read_bytes() == b"wav-bytes"
 
 
-def test_transcribe_unknown_session_is_404():
+def test_session_survives_server_restart(make_client, tmp_path):
+    first = make_client()
+    sid = new_session(first)["sid"]
+    first.post(f"/api/sessions/{sid}/transcribe?q=1", content=b"x")
+
+    second = make_client()  # новый экземпляр приложения на тех же данных
+    session = second.get(f"/api/sessions/{sid}").json()
+    assert session["attempts"][0]["text"] == "мой ответ"
+    assert len(session["questions"]) == 3
+    assert len(second.get("/api/interviews").json()) == 1
+
+
+def test_transcribe_unknown_session_is_404(make_client):
     assert make_client().post("/api/sessions/nope/transcribe?q=0", content=b"x").status_code == 404
+    assert make_client().get("/api/sessions/..%2Fx").status_code == 404
 
 
-def test_transcribe_empty_speech_is_422_with_russian_hint():
+def test_transcribe_unknown_question_is_404(make_client):
+    client = make_client()
+    sid = new_session(client)["sid"]
+    assert client.post(f"/api/sessions/{sid}/transcribe?q=9", content=b"x").status_code == 404
+
+
+def test_transcribe_empty_speech_is_422_with_russian_hint_and_saves_nothing(make_client):
     client = make_client(stt=FakeStt(texts=[""]))
     sid = new_session(client)["sid"]
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
     assert response.status_code == 422
     assert "микрофон" in response.json()["detail"]
+    assert client.get(f"/api/sessions/{sid}").json()["attempts"] == []
 
 
-def test_review_uses_question_and_transcript():
-    llm = FakeLlm()
-    client = make_client(llm=llm)
-    session = new_session(client)
-    sid = session["sid"]
-    client.post(f"/api/sessions/{sid}/transcribe?q=1", content=b"x")
-    response = client.post(f"/api/sessions/{sid}/review", json={"q": 1})
-    assert response.status_code == 200
-    assert response.json()["verdict"] == "improve"
-    user_message = llm.calls[0][1]["content"]
-    assert session["questions"][1]["text"] in user_message
-    assert "мой ответ" in user_message
-
-
-def test_review_uses_latest_attempt():
+def test_retry_creates_second_attempt_and_review_uses_latest(make_client):
     llm = FakeLlm()
     client = make_client(stt=FakeStt(texts=["первая попытка", "вторая попытка"]), llm=llm)
     sid = new_session(client)["sid"]
@@ -124,9 +318,24 @@ def test_review_uses_latest_attempt():
     client.post(f"/api/sessions/{sid}/review", json={"q": 0})
     assert "вторая попытка" in llm.calls[0][1]["content"]
     assert "первая попытка" not in llm.calls[0][1]["content"]
+    attempts = client.get(f"/api/sessions/{sid}").json()["attempts"]
+    assert [a["n"] for a in attempts] == [1, 2]
+    assert attempts[0]["review"] is None and attempts[1]["review"]["verdict"] == "improve"
 
 
-def test_review_without_answer_is_409():
+def test_review_uses_question_criteria_and_transcript(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    sid = new_session(client)["sid"]
+    client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
+    response = client.post(f"/api/sessions/{sid}/review", json={"q": 0})
+    assert response.status_code == 200
+    assert response.json()["verdict"] == "improve"
+    user_message = llm.calls[0][1]["content"]
+    assert "Первый вопрос?" in user_message and "критерий" in user_message and "мой ответ" in user_message
+
+
+def test_review_without_answer_is_409(make_client):
     client = make_client()
     sid = new_session(client)["sid"]
     response = client.post(f"/api/sessions/{sid}/review", json={"q": 0})
@@ -134,7 +343,7 @@ def test_review_without_answer_is_409():
     assert "запишите" in response.json()["detail"].lower()
 
 
-def test_review_llm_error_is_503_with_message():
+def test_review_llm_error_is_503_with_message(make_client):
     llm = FakeLlm()
     client = make_client(llm=llm)
     sid = new_session(client)["sid"]
@@ -145,30 +354,7 @@ def test_review_llm_error_is_503_with_message():
     assert response.json()["detail"] == "LM Studio не отвечает."
 
 
-def test_tts_returns_wav():
-    tts = FakeTts()
-    response = make_client(tts=tts).post("/api/tts", json={"text": "Привет"})
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "audio/wav"
-    assert response.content == b"RIFFfake-wav"
-    assert tts.texts == ["Привет"]
-
-
-def test_tts_failure_is_500_with_russian_message():
-    class BrokenTts:
-        def synthesize(self, text):
-            raise ValueError("Failed to parse SSML")
-
-    response = make_client(tts=BrokenTts()).post("/api/tts", json={"text": "Привет"})
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Не удалось озвучить текст."
-
-
-def test_tts_rejects_overlong_text():
-    assert make_client().post("/api/tts", json={"text": "а" * 2001}).status_code == 422
-
-
-def test_transcribe_rejects_oversized_body_with_413():
+def test_transcribe_rejects_oversized_body_with_413(make_client):
     client = make_client(config=Config(stt=SttConfig(max_answer_seconds=1)))
     sid = new_session(client)["sid"]
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"\0" * 6_500_000)
@@ -176,12 +362,10 @@ def test_transcribe_rejects_oversized_body_with_413():
     assert "длинн" in response.json()["detail"]
 
 
-def test_transcribe_stops_reading_streamed_body_at_cap():
+def test_transcribe_stops_reading_streamed_body_at_cap(make_client):
     stt = FakeStt()
-    app = create_app(
-        config=Config(stt=SttConfig(max_answer_seconds=1)), glossary=Glossary(), stt=stt, tts=FakeTts(), llm=FakeLlm()
-    )
-    sid = new_session(TestClient(app))["sid"]
+    client = make_client(stt=stt, config=Config(stt=SttConfig(max_answer_seconds=1)))
+    sid = new_session(client)["sid"]
     received, sent = [], []
 
     async def receive():  # поток кусков по 1 МБ без заголовка Content-Length
@@ -196,14 +380,14 @@ def test_transcribe_stops_reading_streamed_body_at_cap():
         "headers": [(b"content-type", b"audio/wav")], "http_version": "1.1", "scheme": "http",
         "server": ("test", 80), "client": ("test", 1), "root_path": "",
     }
-    asyncio.run(app(scope, receive, send))
+    asyncio.run(client.app(scope, receive, send))  # type: ignore[attr-defined]
 
     assert sent[0]["status"] == 413
     assert stt.texts == ["мой ответ"]  # распознавание не вызывалось
     assert len(received) < 50  # чтение прервано по достижении лимита, а не после буферизации всего тела
 
 
-def test_transcribe_audio_error_is_422_with_message():
+def test_transcribe_audio_error_is_422_with_message(make_client):
     class BadAudioStt:
         def transcribe(self, wav):
             raise AudioError("Неподдерживаемая частота записи.")
@@ -213,13 +397,3 @@ def test_transcribe_audio_error_is_422_with_message():
     response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
     assert response.status_code == 422
     assert response.json()["detail"] == "Неподдерживаемая частота записи."
-
-
-def test_tts_rejects_empty_text():
-    assert make_client().post("/api/tts", json={"text": ""}).status_code == 422
-
-
-def test_index_page_is_served():
-    response = make_client().get("/")
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
