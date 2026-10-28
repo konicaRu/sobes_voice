@@ -1,0 +1,23 @@
+server: { host: 127.0.0.1, port: 8000 }
+lmstudio:
+  base_url: http://localhost:1234/v1
+  model: auto            # auto = первая загруженная модель из /v1/models
+  temperature: 0.3
+  max_tokens: 1200
+  disable_thinking: true # добавлять /no_think, вырезать <think>…</think>
+  timeout_s: 120
+stt:
+  engine: gigaam         # gigaam | whisper
+  model: gigaam-v3-e2e-rnnt
+  use_vad: true
+  max_answer_seconds: 300
+tts:
+  engine: silero
+  model: v5_6_ru         # в PLAN.md был v5_5_ru; v5_6_ru новее (проверено по silero-models)
+  speaker: eugene        # aidar | baya | kseniya | xenia | eugene
+  sample_rate: 48000
+  speak_feedback: true
+session:
+  shuffle: false
+  questions_per_session: 0   # 0 = все
+paths: { data_dir: data }
