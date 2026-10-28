@@ -1,17 +1,20 @@
-import threading
 import time
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.config import ROOT, load_config, load_glossary
 from app.documents import MAX_UPLOAD_BYTES, DocumentError, extract_text, safe_filename
+from app.generation import MAX_VACANCY_CHARS as MAX_GENERATION_VACANCY_CHARS
+from app.generation import generate_questions, generation_percent, validate_counts
+from app.jobs import JobTracker
 from app.llm import LlmError, build_llm
-from app.models import MAX_QUESTIONS, SLOTS, Attempt, Question
+from app.models import MAX_QUESTION_CHARS, MAX_QUESTIONS, SLOTS, Attempt, Question
 from app.profile import MAX_PROFILE_CHARS, build_profile, profile_percent
 from app.questions import merge_questions, parse_questions
 from app.review import MAX_VACANCY_CHARS, review_answer
@@ -43,6 +46,13 @@ class ProfileRequest(BaseModel):
 
 class QuestionsPayload(BaseModel):
     questions: list[Question] = Field(min_length=1, max_length=MAX_QUESTIONS)
+
+
+class GenerateRequest(BaseModel):
+    counts: dict[str, int]
+    existing: list[Annotated[str, StringConstraints(max_length=MAX_QUESTION_CHARS)]] = Field(
+        default_factory=list, max_length=MAX_QUESTIONS
+    )
 
 
 async def read_limited(request: Request, max_bytes: int, message: str) -> bytes:
@@ -96,7 +106,7 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
 
     app = FastAPI(title="Interview Trainer", lifespan=lifespan)
     app.state.stt, app.state.tts, app.state.llm = stt, tts, llm
-    profile_jobs: dict[str, dict] = {}  # фоновая сборка профиля по собеседованиям
+    jobs = JobTracker()  # фоновые задачи: сборка профиля, генерация вопросов
 
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
@@ -114,19 +124,22 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     async def document_error_handler(request: Request, exc: DocumentError):
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
-    def review_context(interview_id: str) -> dict:
-        """Профиль, вакансия и термины, которые добавляются к каждому разбору ответа."""
-        vacancy = ""
+    def vacancy_text(interview_id: str, limit: int) -> str:
+        text = ""
         for name in storage.list_documents(interview_id)["vacancy"]:
             try:
-                vacancy += extract_text(name, storage.read_document(interview_id, "vacancy", name)) + "\n"
+                text += extract_text(name, storage.read_document(interview_id, "vacancy", name)) + "\n"
             except DocumentError:
                 continue
-            if len(vacancy) >= MAX_VACANCY_CHARS:
+            if len(text) >= limit:
                 break
+        return text[:limit]
+
+    def review_context(interview_id: str) -> dict:
+        """Профиль, вакансия и термины, которые добавляются к каждому разбору ответа."""
         return {
             "profile": storage.load_profile(interview_id) or "",
-            "vacancy": vacancy[:MAX_VACANCY_CHARS],
+            "vacancy": vacancy_text(interview_id, MAX_VACANCY_CHARS),
             "terms": [*glossary.tts, *glossary.stt_fix.values()],
         }
 
@@ -181,33 +194,12 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             "profile": storage.load_profile(interview_id),
         }
 
-    def profile_status(interview_id: str) -> dict:
-        job = profile_jobs.get(interview_id)
-        if job is None:
-            return {"state": "idle", "percent": 0, "message": "", "elapsed": 0}
-        finished = job.get("finished") or time.time()
-        return {**{k: v for k, v in job.items() if k not in ("started", "finished")}, "elapsed": round(finished - job["started"])}
-
-    def run_profile_job(interview_id: str, resumes: list[str], cases: list[str]) -> None:
-        job = profile_jobs[interview_id]
-
-        def progress(written: int) -> None:
-            job.update(percent=profile_percent(written), message="Модель пишет профиль…")
-
-        try:
-            profile = build_profile(app.state.llm, resumes, cases, on_progress=progress)
-            storage.save_profile(interview_id, profile)
-            job.update(state="done", percent=100, message="Профиль собран и сохранён.", profile=profile)
-        except Exception as exc:
-            message = str(exc) if isinstance(exc, LlmError) else "Не удалось собрать профиль."
-            job.update(state="error", message=message)
-        job["finished"] = time.time()
-
     @app.post("/api/interviews/{interview_id}/profile")
     def create_profile(interview_id: str):
         """Запускает сборку профиля в фоне; ход виден через GET .../profile/status."""
-        if profile_jobs.get(interview_id, {}).get("state") == "running":
-            return profile_status(interview_id)
+        key = f"profile:{interview_id}"
+        if jobs.status(key)["state"] == "running":
+            return jobs.status(key)
         documents = storage.list_documents(interview_id)
         texts = {
             slot: [extract_text(name, storage.read_document(interview_id, slot, name)) for name in documents[slot]]
@@ -215,18 +207,21 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
         }
         if not texts["resume"] and not texts["cases"]:
             raise HTTPException(409, "Сначала загрузите резюме или кейсы.")
-        profile_jobs[interview_id] = {
-            "state": "running", "percent": 10, "message": "Модель читает документы…", "started": time.time(),
-        }
-        threading.Thread(
-            target=run_profile_job, args=(interview_id, texts["resume"], texts["cases"]), daemon=True
-        ).start()
-        return profile_status(interview_id)
+
+        def work(progress) -> dict:
+            profile = build_profile(app.state.llm, texts["resume"], texts["cases"], on_progress=progress)
+            storage.save_profile(interview_id, profile)
+            return {"profile": profile}
+
+        return jobs.start(
+            key, work, percent_of=profile_percent, start_message="Модель читает документы…",
+            running_message="Модель пишет профиль…", done_message="Профиль собран и сохранён.",
+        )
 
     @app.get("/api/interviews/{interview_id}/profile/status")
     def get_profile_status(interview_id: str):
         storage.get_interview(interview_id)
-        return profile_status(interview_id)
+        return jobs.status(f"profile:{interview_id}")
 
     @app.put("/api/interviews/{interview_id}/profile")
     def save_profile(interview_id: str, body: ProfileRequest):
@@ -264,6 +259,38 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
         if not questions:
             raise HTTPException(422, "Не нашёл вопросов в файле. Добавьте их в редакторе вручную.")
         return {"questions": [q.model_dump() for q in questions], "files": files}
+
+    @app.post("/api/interviews/{interview_id}/questions/generate")
+    def generate_questions_endpoint(interview_id: str, body: GenerateRequest):
+        """Генерирует вопросы в фоне (из вакансии и профиля); результат приходит в статусе, список не сохраняется."""
+        storage.get_interview(interview_id)
+        key = f"questions:{interview_id}"
+        if jobs.status(key)["state"] == "running":
+            return jobs.status(key)
+        try:
+            counts = validate_counts(body.counts)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        vacancy = vacancy_text(interview_id, MAX_GENERATION_VACANCY_CHARS)
+        profile = storage.load_profile(interview_id) or ""
+        if not vacancy.strip() and not profile.strip():
+            raise HTTPException(409, "Загрузите вакансию или соберите профиль кандидата.")
+        total = sum(counts.values())
+
+        def work(progress) -> dict:
+            questions = generate_questions(app.state.llm, vacancy, profile, counts, body.existing, on_progress=progress)
+            return {"questions": [q.model_dump() for q in questions]}
+
+        return jobs.start(
+            key, work, percent_of=lambda written: generation_percent(written, total),
+            start_message="Модель читает вакансию и профиль…", running_message="Модель придумывает вопросы…",
+            done_message="Вопросы готовы. Проверьте и утвердите список.",
+        )
+
+    @app.get("/api/interviews/{interview_id}/questions/generate/status")
+    def get_generation_status(interview_id: str):
+        storage.get_interview(interview_id)
+        return jobs.status(f"questions:{interview_id}")
 
     @app.get("/api/interviews/{interview_id}/questions")
     def get_questions(interview_id: str):

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config, Glossary, SttConfig
+from app.generation import GeneratedQuestion, QuestionBatch
 from app.llm import LlmError
 from app.main import create_app
 from app.profile import ProfileDraft
@@ -22,6 +23,12 @@ QUESTIONS = [
     {"text": "Второй вопрос?"},
     {"text": "Третий вопрос?"},
 ]
+
+
+BATCH = QuestionBatch(questions=[
+    GeneratedQuestion(text="Как вы проверяете SRM?", category="technical", what_to_check=["доли групп", "критерий"]),
+    GeneratedQuestion(text="Почему вы хотите к нам?", category="motivation", what_to_check=["мотивы", "знание компании"]),
+])
 
 
 class FakeStt:
@@ -57,6 +64,8 @@ class FakeLlm:
         self.calls.append(messages)
         if model_cls is ProfileDraft:
             return ProfileDraft(profile="Профиль: вёл A/B-тесты, retention +5%.")
+        if model_cls is QuestionBatch:
+            return BATCH
         return RESULT
 
 
@@ -397,6 +406,82 @@ def test_profile_build_error_is_reported_in_status_and_can_be_retried(make_clien
     llm.error = None
     client.post(f"/api/interviews/{interview_id}/profile")
     assert wait_for_profile(client, interview_id)["state"] == "done"
+
+
+COUNTS = {"technical": 1, "motivation": 1}
+
+
+def start_generation(client, interview_id, counts=None, existing=()):
+    return client.post(
+        f"/api/interviews/{interview_id}/questions/generate", json={"counts": counts or COUNTS, "existing": list(existing)}
+    )
+
+
+def wait_for_generation(client, interview_id, timeout=5.0):
+    deadline = time.time() + timeout
+    while True:
+        status = client.get(f"/api/interviews/{interview_id}/questions/generate/status").json()
+        if status["state"] != "running" or time.time() > deadline:
+            return status
+        time.sleep(0.02)
+
+
+def test_generation_status_is_idle_before_any_run(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    assert client.get(f"/api/interviews/{interview_id}/questions/generate/status").json()["state"] == "idle"
+
+
+def test_generation_needs_vacancy_or_profile(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    response = start_generation(client, interview_id)
+    assert response.status_code == 409 and "вакансию" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("counts", [{}, {"technical": 0}, {"unknown": 2}, {"technical": 11}])
+def test_generation_rejects_bad_counts(make_client, counts):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "Вёл A/B-тесты"})
+    assert start_generation(client, interview_id, counts=counts or {"x": 0}).status_code == 422
+
+
+def test_generation_runs_in_background_and_does_not_touch_approved_questions(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    interview_id = new_interview(client)["id"]
+    upload(client, interview_id, "vacancy", "вакансия.md", "Нужен продуктовый аналитик".encode())
+    client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "Вёл A/B-тесты"})
+    started = start_generation(client, interview_id, existing=["Что такое MDE?"])
+    assert started.status_code == 200 and started.json()["state"] in ("running", "done")
+
+    status = wait_for_generation(client, interview_id)
+    assert status["state"] == "done" and status["percent"] == 100
+    assert [(q["id"], q["category"], q["text"]) for q in status["questions"]] == [
+        ("q01", "technical", "Как вы проверяете SRM?"), ("q02", "motivation", "Почему вы хотите к нам?"),
+    ]
+    assert status["questions"][0]["what_to_check"] == ["доли групп", "критерий"]
+    user = llm.calls[0][1]["content"]
+    assert "Нужен продуктовый аналитик" in user and "Вёл A/B-тесты" in user and "Что такое MDE?" in user
+    assert client.get(f"/api/interviews/{interview_id}/questions").json() == {"questions": None}
+
+
+def test_generation_works_with_profile_only(make_client):
+    client = make_client()
+    interview_id = new_interview(client)["id"]
+    client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "Вёл A/B-тесты"})
+    assert start_generation(client, interview_id).status_code == 200
+    assert wait_for_generation(client, interview_id)["state"] == "done"
+
+
+def test_generation_error_is_reported_in_status(make_client):
+    client = make_client(llm=FakeLlm(error=LlmError("LM Studio не отвечает.")))
+    interview_id = new_interview(client)["id"]
+    client.put(f"/api/interviews/{interview_id}/profile", json={"profile": "Вёл A/B-тесты"})
+    start_generation(client, interview_id)
+    status = wait_for_generation(client, interview_id)
+    assert status["state"] == "error" and status["message"] == "LM Studio не отвечает."
 
 
 def test_profile_can_be_edited_by_user(make_client):

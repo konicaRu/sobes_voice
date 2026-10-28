@@ -7,6 +7,13 @@ const SLOTS = {
   cases: { label: 'Кейсы', hint: 'Описания ваших кейсов' },
 };
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const CATEGORY_LABELS = {
+  experience: 'Опыт и кейсы',
+  technical: 'Технические',
+  product_case: 'Продуктовые кейсы',
+  behavioral: 'Поведенческие',
+  motivation: 'Мотивация',
+};
 
 let callbacks = { onBack: () => {}, onStart: () => {} };
 // ctx.draft: редактируемый список; ctx.approvedCount: сколько вопросов утверждено на сервере
@@ -46,6 +53,7 @@ let profileTimer = null;
 function updateProfileButton() {
   const hasSources = ctx.documents.resume.length + ctx.documents.cases.length > 0;
   $('profile-btn').disabled = ctx.profileRunning || !hasSources;
+  updateGenerateButton();
 }
 
 export function stopProfilePolling() {
@@ -196,9 +204,88 @@ async function removeFile(slot, name) {
 
 const toDraft = (question) => ({
   text: question.text,
+  category: question.category || 'general',
   criteria: question.what_to_check.join('\n'),
   reference: question.reference_answer || '',
 });
+
+// ---------- генерация вопросов ----------
+
+let generateTimer = null;
+
+function updateGenerateButton() {
+  const hasSources = ctx.documents.vacancy.length > 0 || $('profile-text').value.trim() !== '';
+  $('generate-btn').disabled = ctx.generating || !hasSources;
+}
+
+function stopGenerationPolling() {
+  clearInterval(generateTimer);
+  generateTimer = null;
+}
+
+function generationCounts() {
+  return Object.fromEntries(
+    Object.keys(CATEGORY_LABELS).map((key) => [key, Math.max(0, Math.min(10, Number($(`count-${key}`).value) || 0))]),
+  );
+}
+
+function applyGenerationStatus(status) {
+  ctx.generating = status.state === 'running';
+  $('generate-progress').hidden = !ctx.generating;
+  $('generate-progress').value = status.percent;
+  $('generate-btn').textContent = ctx.generating ? 'Генерирую…' : 'Сгенерировать';
+  if (ctx.generating) {
+    $('generate-status').textContent = `${status.message} ${status.percent}% · ${status.elapsed} с`;
+  } else {
+    stopGenerationPolling();
+    if (status.state === 'done') {
+      ctx.draft.push(...status.questions.map(toDraft));
+      markDirty();
+      renderEditor();
+      $('generate-status').textContent = status.questions.length
+        ? `Добавлено вопросов: ${status.questions.length} (за ${status.elapsed} с). Проверьте список и утвердите его.`
+        : 'Новых вопросов не получилось (все повторяли уже имеющиеся). Попробуйте ещё раз.';
+    } else if (status.state === 'error') {
+      $('generate-status').textContent = '';
+      showError(status.message);
+    }
+  }
+  updateGenerateButton();
+}
+
+async function pollGeneration(interviewId) {
+  if ($('prepare').hidden || ctx.id !== interviewId) {
+    stopGenerationPolling();
+    return;
+  }
+  try {
+    applyGenerationStatus(await json(`/api/interviews/${interviewId}/questions/generate/status`));
+  } catch (error) {
+    stopGenerationPolling();
+    showError(error.message);
+  }
+}
+
+function startGenerationPolling() {
+  stopGenerationPolling();
+  const interviewId = ctx.id;
+  generateTimer = setInterval(() => pollGeneration(interviewId), 700);
+}
+
+async function generateQuestions() {
+  showError('');
+  try {
+    const profile = $('profile-text').value;
+    if (profile.trim()) await json(`/api/interviews/${ctx.id}/profile`, jsonRequest('PUT', { profile }));
+    const existing = ctx.draft.map((item) => item.text.trim()).filter(Boolean);
+    applyGenerationStatus(
+      await json(`/api/interviews/${ctx.id}/questions/generate`, jsonRequest('POST', { counts: generationCounts(), existing })),
+    );
+    if (ctx.generating) startGenerationPolling();
+  } catch (error) {
+    showError(error.message);
+  }
+}
 
 function updateStatus() {
   const status = $('approve-status');
@@ -226,7 +313,9 @@ function renderEditor() {
   $('questions-editor').replaceChildren(...ctx.draft.map((item, index) => {
     const row = element('div', 'q-row');
     const head = element('div', 'q-head');
-    head.append(element('strong', '', `№ ${index + 1}`));
+    const title = element('strong', '', `№ ${index + 1}`);
+    if (CATEGORY_LABELS[item.category]) title.append(element('span', 'q-tag', `· ${CATEGORY_LABELS[item.category]}`));
+    head.append(title);
     for (const [label, title, action] of [
       ['↑', 'Выше', () => move(index, -1)],
       ['↓', 'Ниже', () => move(index, 1)],
@@ -277,6 +366,7 @@ async function approveQuestions() {
     .filter((item) => item.text.trim())
     .map((item) => ({
       text: item.text.trim(),
+      category: item.category,
       what_to_check: item.criteria.split('\n').map((line) => line.trim()).filter(Boolean),
       reference_answer: item.reference.trim(),
     }));
@@ -295,6 +385,7 @@ async function approveQuestions() {
 
 export async function openPrepare(interviewId) {
   stopProfilePolling();
+  stopGenerationPolling();
   showScreen('prepare');
   try {
     const details = await json(`/api/interviews/${interviewId}`);
@@ -306,6 +397,7 @@ export async function openPrepare(interviewId) {
       dirty: false,
       paste: {},
       profileRunning: false,
+      generating: false,
     };
     $('prepare-title').textContent = details.interview.title;
     $('profile-text').value = details.profile || '';
@@ -319,6 +411,11 @@ export async function openPrepare(interviewId) {
       applyProfileStatus(status);
       startProfilePolling();
     }
+    const generation = await json(`/api/interviews/${interviewId}/questions/generate/status`);
+    if (generation.state === 'running') {
+      applyGenerationStatus(generation);
+      startGenerationPolling();
+    }
   } catch (error) {
     showError(error.message);
   }
@@ -329,9 +426,11 @@ export function initPrepare({ onBack, onStart }) {
   $('back-home-btn').addEventListener('click', () => callbacks.onBack());
   $('profile-btn').addEventListener('click', buildProfile);
   $('profile-save-btn').addEventListener('click', saveProfile);
+  $('generate-btn').addEventListener('click', generateQuestions);
+  $('profile-text').addEventListener('input', updateGenerateButton);
   $('parse-btn').addEventListener('click', parseQuestions);
   $('add-question-btn').addEventListener('click', () => {
-    ctx.draft.push({ text: '', criteria: '', reference: '' });
+    ctx.draft.push({ text: '', category: 'general', criteria: '', reference: '' });
     markDirty();
     renderEditor();
   });

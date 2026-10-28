@@ -61,6 +61,23 @@
           <button id="parse-btn" disabled>Извлечь вопросы из файла</button>
           <button id="add-question-btn">Добавить вопрос</button>
         </div>
+
+        <div class="generate">
+          <h3>Сгенерировать вопросы</h3>
+          <p class="muted">Из вакансии и профиля кандидата. Новые вопросы добавятся в конец списка и не будут повторять уже имеющиеся, поэтому можно сначала извлечь вопросы из файла, а потом догенерировать.</p>
+          <div class="counts">
+            <label>Опыт и кейсы <input type="number" id="count-experience" min="0" max="10" value="3"></label>
+            <label>Технические <input type="number" id="count-technical" min="0" max="10" value="4"></label>
+            <label>Продуктовые кейсы <input type="number" id="count-product_case" min="0" max="10" value="3"></label>
+            <label>Поведенческие <input type="number" id="count-behavioral" min="0" max="10" value="1"></label>
+            <label>Мотивация <input type="number" id="count-motivation" min="0" max="10" value="1"></label>
+          </div>
+          <div class="row">
+            <button id="generate-btn" disabled>Сгенерировать</button>
+            <span id="generate-status" class="muted"></span>
+          </div>
+          <progress id="generate-progress" max="100" value="0" hidden></progress>
+        </div>
         <p id="questions-empty" class="muted">Список пуст.</p>
         <div id="questions-editor"></div>
         <div class="row">
