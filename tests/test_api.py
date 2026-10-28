@@ -1,11 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import Config, Glossary
+from app.config import Config, Glossary, SttConfig
 from app.llm import LlmError
 from app.main import create_app
 from app.review import ReviewResult
-from app.stt import Transcription
+from app.stt import AudioError, Transcription
 
 RESULT = ReviewResult(
     verdict="improve", score=3, strengths=["есть пример"], issues=["нет цифр"],
@@ -47,9 +47,9 @@ class FakeLlm:
         return RESULT
 
 
-def make_client(stt=None, tts=None, llm=None):
+def make_client(stt=None, tts=None, llm=None, config=None):
     app = create_app(
-        config=Config(), glossary=Glossary(),
+        config=config or Config(), glossary=Glossary(),
         stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(),
     )
     return TestClient(app)
@@ -160,6 +160,30 @@ def test_tts_failure_is_500_with_russian_message():
     response = make_client(tts=BrokenTts()).post("/api/tts", json={"text": "Привет"})
     assert response.status_code == 500
     assert response.json()["detail"] == "Не удалось озвучить текст."
+
+
+def test_tts_rejects_overlong_text():
+    assert make_client().post("/api/tts", json={"text": "а" * 2001}).status_code == 422
+
+
+def test_transcribe_rejects_oversized_body_with_413():
+    client = make_client(config=Config(stt=SttConfig(max_answer_seconds=1)))
+    sid = new_session(client)["sid"]
+    response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"\0" * 6_500_000)
+    assert response.status_code == 413
+    assert "длинн" in response.json()["detail"]
+
+
+def test_transcribe_audio_error_is_422_with_message():
+    class BadAudioStt:
+        def transcribe(self, wav):
+            raise AudioError("Неподдерживаемая частота записи.")
+
+    client = make_client(stt=BadAudioStt())
+    sid = new_session(client)["sid"]
+    response = client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Неподдерживаемая частота записи."
 
 
 def test_tts_rejects_empty_text():

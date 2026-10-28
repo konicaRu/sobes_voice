@@ -1,9 +1,10 @@
 import io
 
 import numpy as np
+import pytest
 import soundfile as sf
 
-from app.stt import SttEngine, decode_wav, normalize_level, split_at_pauses
+from app.stt import AudioError, SttEngine, decode_wav, normalize_level, split_at_pauses
 
 SR = 16000
 
@@ -71,6 +72,19 @@ def test_engine_chunks_audio_and_applies_stt_fix():
     assert len(calls) == 3
     assert result.seconds == 45
     assert result.elapsed >= 0
+
+
+@pytest.mark.parametrize("sample_rate", [1000, 100000])
+def test_engine_rejects_unsupported_sample_rate(sample_rate):
+    engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={})
+    with pytest.raises(AudioError, match="частот"):
+        engine.transcribe(wav_bytes(np.zeros(sample_rate, dtype="float32"), sr=sample_rate))
+
+
+def test_engine_rejects_too_long_audio():
+    engine = SttEngine(lambda chunk, sr: "текст", chunk_seconds=20, stt_fix={}, max_seconds=10)
+    with pytest.raises(AudioError, match="длинн"):
+        engine.transcribe(wav_bytes(speech(15)))
 
 
 def test_engine_skips_empty_chunks():

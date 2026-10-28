@@ -55,12 +55,28 @@ def _latin_to_russian(match: re.Match) -> str:
     return _transliterate(word)
 
 
+MAX_NUMBER_DIGITS = 15  # длиннее читаем по цифрам: num2words на огромных числах тяжёлый
+
+
+def _integer_to_words(match: re.Match) -> str:
+    digits = match[0]
+    if len(digits) > MAX_NUMBER_DIGITS:
+        return " ".join(num2words(int(d), lang="ru") for d in digits)
+    return num2words(int(digits), lang="ru")
+
+
 def normalize_for_tts(text: str, glossary: dict[str, str]) -> str:
     """Подготовка текста для Silero: термины по глоссарию, латиница, числа и проценты словами."""
     for term in sorted(glossary, key=len, reverse=True):
         text = re.sub(_term_pattern(term), lambda _: glossary[term], text, flags=re.IGNORECASE)
     text = re.sub(r"[A-Za-z]+", _latin_to_russian, text)
-    text = re.sub(r"(\d+)\s*%", lambda m: f"{num2words(int(m[1]), lang='ru')} {_percent_word(int(m[1]))}", text)
-    text = re.sub(r"\d+[.,]\d+", lambda m: num2words(Decimal(m[0].replace(",", ".")), lang="ru"), text)
-    text = re.sub(r"\d+", lambda m: num2words(int(m[0]), lang="ru"), text)
+    text = re.sub(
+        rf"(\d{{1,{MAX_NUMBER_DIGITS}}})\s*%", lambda m: f"{num2words(int(m[1]), lang='ru')} {_percent_word(int(m[1]))}", text
+    )
+    text = re.sub(
+        rf"\d{{1,{MAX_NUMBER_DIGITS}}}[.,]\d{{1,{MAX_NUMBER_DIGITS}}}",
+        lambda m: num2words(Decimal(m[0].replace(",", ".")), lang="ru"),
+        text,
+    )
+    text = re.sub(r"\d+", _integer_to_words, text)
     return text.replace("%", " процентов")

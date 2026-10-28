@@ -14,7 +14,7 @@ from app.llm import LlmError, build_llm
 from app.models import Question
 from app.review import review_answer
 from app.sample_questions import SAMPLE_QUESTIONS
-from app.stt import build_stt
+from app.stt import AudioError, build_stt
 from app.tts import build_tts
 
 STATIC_DIR = ROOT / "static"
@@ -26,8 +26,13 @@ class Session:
     attempts: dict[int, list[tuple[str, float]]] = field(default_factory=dict)
 
 
+MAX_TTS_CHARS = 2000
+MAX_WAV_BYTES_PER_SECOND = 48000 * 2 * 2  # 48 кГц, 16 бит, стерео: потолок для проверки размера тела
+MAX_RECORDING_MARGIN_S = 30
+
+
 class TtsRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=MAX_TTS_CHARS)
 
 
 class ReviewRequest(BaseModel):
@@ -104,7 +109,17 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None) -> Fast
     async def transcribe(sid: str, request: Request, q: int = Query(ge=0)):
         session = get_session(sid)
         check_question(session, q)
-        result = await run_in_threadpool(app.state.stt.transcribe, await request.body())
+        max_bytes = (config.stt.max_answer_seconds + MAX_RECORDING_MARGIN_S) * MAX_WAV_BYTES_PER_SECOND
+        too_long = HTTPException(413, "Запись слишком длинная.")
+        if int(request.headers.get("content-length") or 0) > max_bytes:
+            raise too_long
+        body = await request.body()
+        if len(body) > max_bytes:
+            raise too_long
+        try:
+            result = await run_in_threadpool(app.state.stt.transcribe, body)
+        except AudioError as exc:
+            raise HTTPException(422, str(exc)) from exc
         if not result.text:
             raise HTTPException(422, "Не удалось распознать речь. Проверьте микрофон и попробуйте ещё раз.")
         session.attempts.setdefault(q, []).append((result.text, result.seconds))

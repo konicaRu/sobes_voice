@@ -44,6 +44,12 @@ def test_tts_glossary_wins_over_transliteration():
     assert normalize_for_tts("SQL", GLOSSARY) == "эс-кью-эль"
 
 
+def test_tts_huge_digit_run_is_spelled_digit_by_digit_without_blowup():
+    result = normalize_for_tts("1" * 5000, {})
+    assert not re.search(r"\d", result)
+    assert result.split()[:2] == ["один", "один"]
+
+
 def test_tts_numbers_to_words():
     assert normalize_for_tts("Выросло на 12 тысяч", {}) == "Выросло на двенадцать тысяч"
 
