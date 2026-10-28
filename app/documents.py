@@ -114,7 +114,15 @@ def _pdf_text(data: bytes) -> str:
             raise DocumentError("PDF защищён паролем.")
         if len(reader.pages) > MAX_PDF_PAGES:
             raise DocumentError("В PDF слишком много страниц.")
-        return "\n".join((page.extract_text() or "") for page in reader.pages)
+        parts: list[str] = []
+        total = 0
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            total += len(text) + 1
+            if total > MAX_TEXT_CHARS:  # не накапливаем весь документ, чтобы проверить размер в конце
+                raise DocumentError("Документ слишком большой.")
+            parts.append(text)
+        return "\n".join(parts)
     except DocumentError:
         raise
     except Exception as exc:

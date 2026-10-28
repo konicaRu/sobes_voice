@@ -19,7 +19,7 @@
   - `stt.py` (GigaAM, нарезка по паузам, приведение к 16 кГц, выравнивание громкости), `tts.py` (Silero, кэш WAV на диске), `text_norm.py` (глоссарий, числа, транслитерация латиницы).
   - `llm.py` (клиент LM Studio, JSON-схема, повторы, лог `data/logs/llm.jsonl`), `review.py` + `prompts/review.md`.
 - `static/`: страница без фреймворков, ES-модули. `index.html`, `style.css`, `main.js` (связка экранов), `ui.js` (общие помощники), `home.js` (список собеседований), `prepare.js` (документы по слотам и редактор вопросов), `interview.js` (голосовой цикл), `recorder-worklet.js` (запись через AudioWorklet, WAV 16 кГц mono).
-- `tests/`: pytest, 149 тестов; STT, TTS и LLM замоканы.
+- `tests/`: pytest, 151 тест; STT, TTS и LLM замоканы.
 - `.claude/settings.json`: PostToolUse-хук (после правки `.py` прогоняет pytest через `scripts/hooks/pytest_on_py_edit.py`, лог в `data/logs/hook.log`).
 - `.claude/skills/git-save/`: скилл `/git-save` (тесты, pyright, обновление MEMORY/ARCHITECTURE/README, коммит, пуш); запускается только пользователем.
 - `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
@@ -62,6 +62,9 @@ pyright                                   # из корня проекта, до
 - API (этап 2): файлы загружаются сырым телом запроса (`?slot=&filename=`), а не multipart; нечитаемый файл отклоняется до сохранения. `POST /api/sessions` этапа 1 убран, сессия создаётся через `POST /api/interviews/{id}/sessions` только при утверждённом списке. «Пропустить» и `/next` пока нет (навигация на клиенте).
 
 ## Changelog
+### 2026-10-28 (security-ревью этапа 2)
+- `documents.py`: извлечение текста из PDF прерывается, как только набралось больше `MAX_TEXT_CHARS`; тест на лживый размер в заголовке zip. Тесты: 151.
+
 ### 2026-10-28 (этап 2)
 - Собеседования, документы по слотам, парсер вопросов, редактор списка, хранение на диске (`storage.py`), экран «Подготовка» и список собеседований; `app.js` разбит на ES-модули. Заглушки `sample_questions.py` удалены. Тесты: 149.
 

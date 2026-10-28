@@ -1,4 +1,5 @@
 import io
+import struct
 import zipfile
 
 import pytest
@@ -89,11 +90,47 @@ def test_docx_with_huge_uncompressed_content_is_rejected():
         extract_text("bomb.docx", buffer.getvalue())
 
 
+def test_lying_zip_header_cannot_cause_large_decompression():
+    """zipfile читает запись не дальше заявленного размера, а расхождение ловит по CRC (проверено экспериментом)."""
+    data = make_docx(lambda doc: doc.add_paragraph("текст"))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            target.writestr(item, source.read(item.filename))
+        target.writestr("junk.bin", b"\0" * (MAX_DOCX_UNCOMPRESSED + 1))
+    raw = bytearray(buffer.getvalue())
+    with zipfile.ZipFile(io.BytesIO(bytes(raw))) as archive:
+        local_offset = archive.getinfo("junk.bin").header_offset
+    central = raw.rfind(b"PK\x01\x02", 0, raw.rfind(b"PK\x05\x06"))  # junk.bin записан последним
+    struct.pack_into("<I", raw, local_offset + 22, 100)  # размер в локальном заголовке
+    struct.pack_into("<I", raw, central + 24, 100)  # размер в центральном каталоге
+    assert "текст" in extract_text("liar.docx", bytes(raw))
+
+
 def test_corrupted_docx_and_pdf_give_readable_errors():
     with pytest.raises(DocumentError, match="прочитать"):
         extract_text("bad.docx", b"not a zip")
     with pytest.raises(DocumentError, match="прочитать"):
         extract_text("bad.pdf", b"not a pdf")
+
+
+def test_pdf_extraction_stops_as_soon_as_text_limit_is_exceeded(monkeypatch):
+    calls = []
+
+    class Page:
+        def extract_text(self):
+            calls.append(1)
+            return "а" * (MAX_TEXT_CHARS + 1)
+
+    class FakeReader:
+        def __init__(self, stream):
+            self.is_encrypted = False
+            self.pages = [Page() for _ in range(50)]
+
+    monkeypatch.setattr("pypdf.PdfReader", FakeReader)
+    with pytest.raises(DocumentError, match="слишком большой"):
+        extract_text("big.pdf", b"%PDF")
+    assert len(calls) == 1
 
 
 def test_pdf_text_is_extracted():
