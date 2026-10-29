@@ -111,7 +111,7 @@ def new_session(client):
 
 def test_health_reports_model(make_client):
     body = make_client().get("/api/health").json()
-    assert body["lmstudio"] == {"ok": True, "model": "qwen-test", "error": None}
+    assert body["lmstudio"] == {"ok": True, "model": "qwen-test", "error": None, "hint": None}
     assert body["stt"]["ok"] and body["tts"]["ok"]
 
 
@@ -119,7 +119,9 @@ def test_health_reports_llm_error_without_failing(make_client):
     client = make_client(llm=FakeLlm(error=LlmError("LM Studio не отвечает.")))
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json()["lmstudio"] == {"ok": False, "model": None, "error": "LM Studio не отвечает."}
+    lmstudio = response.json()["lmstudio"]
+    assert lmstudio["ok"] is False and lmstudio["error"] == "LM Studio не отвечает."
+    assert "qwen2.5-14b-instruct-1m" in lmstudio["hint"] and "8192" in lmstudio["hint"] and "1234" in lmstudio["hint"]
 
 
 def test_tts_returns_wav(make_client):

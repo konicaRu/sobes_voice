@@ -19,6 +19,7 @@ class LmStudioConfig(BaseModel):
     temperature: float = 0.3
     max_tokens: int = 1200
     disable_thinking: bool = True
+    recommended_model: str = "qwen2.5-14b-instruct-1m"  # только подсказка пользователю, что загрузить в LM Studio
     timeout_s: int = 120
 
 
@@ -53,6 +54,13 @@ class Config(BaseModel):
 class Glossary(BaseModel):
     tts: dict[str, str] = {}
     stt_fix: dict[str, str] = {}
+
+
+def lmstudio_hint(config: Config) -> str:
+    return (
+        f"Откройте LM Studio, загрузите модель {config.lmstudio.recommended_model} (контекст 8192, "
+        "выгрузка на GPU на максимум) и включите Local Server (порт 1234)."
+    )
 
 
 def load_config(path: Path = ROOT / "config.yaml") -> Config:

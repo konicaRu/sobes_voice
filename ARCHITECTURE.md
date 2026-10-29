@@ -4,7 +4,7 @@
 Локальный голосовой тренажёр собеседований. Подробная архитектура и этапы: [PLAN.md](PLAN.md). Правила работы: [CLAUDE.md](CLAUDE.md).
 
 ## Структура
-Целевая структура описана в PLAN.md, раздел 3. Фактическое состояние (после этапа 6; сверено, новые файлы: `app/settings.py`, `static/settings.js`, `static/favicon.svg`, `start.bat`, `assets/readme/`):
+Целевая структура описана в PLAN.md, раздел 3. Фактическое состояние (после этапа 6; сверено, новые файлы: `app/settings.py`, `static/settings.js`, `static/favicon.svg`, `start.bat`, `start.vbs`, `start.ps1`, `start-console.bat`, `assets/readme/`):
 
 - `PLAN.md`: план работ и архитектура.
 - `CLAUDE.md`: правила работы агента.
@@ -24,7 +24,7 @@
   - `generation.py` + `prompts/generate_questions.md`: генерация вопросов из вакансии (до 3000 символов) и профиля (до 4500) по категориям `experience/technical/product_case/behavioral/motivation`; лишние и повторяющиеся вопросы отбрасываются, критерии режутся до 4 пунктов. Температура 0.7.
   - `profile.py` + `prompts/candidate_profile.md`: профиль кандидата из резюме и кейсов (кэш `profile.md`, правится в UI). Профиль, начало вакансии, эталонный ответ вопроса и список терминов из глоссария добавляются в каждый разбор.
 - `static/`: страница без фреймворков, ES-модули. `index.html`, `style.css`, `main.js` (связка экранов), `ui.js` (общие помощники), `home.js` (список собеседований), `prepare.js` (документы по слотам и редактор вопросов), `interview.js` (голосовой цикл, список вопросов со статусами, пропуск), `report.js` (завершение и отчёт), `history.js` (история и динамика), `settings.js` (страница настроек), `recorder-worklet.js` (запись через AudioWorklet, WAV 16 кГц mono).
-- `tests/`: pytest, 315 тестов; STT, TTS и LLM замоканы.
+- `tests/`: pytest, 316 тестов; STT, TTS и LLM замоканы.
 - `.claude/settings.json`: PostToolUse-хук (после правки `.py` прогоняет pytest через `scripts/hooks/pytest_on_py_edit.py`, лог в `data/logs/hook.log`).
 - `.claude/skills/git-save/`: скилл `/git-save` (тесты, pyright, обновление MEMORY/ARCHITECTURE/README, коммит, пуш); запускается только пользователем.
 - `pyrightconfig.json`: настройки Pyright; корректно работает из CLI в корне проекта (в редакторе LSP-плагин корень выбирает сам, оттуда шум «не удаётся разрешить импорт»).
@@ -73,8 +73,9 @@ pyright                                   # из корня проекта, до
 
 ## Changelog
 ### 2026-10-28 (этап 6, часть 1)
-- `start.bat`: проверка `.venv` и LM Studio, запуск uvicorn, браузер открывается сам, когда сервер готов.
+- Запуск без чёрного окна: `start.bat` → `start.vbs` (скрытый запуск) → `start.ps1` (проверка `.venv`, занятый порт 8000 с предложением перезапуска, LM Studio с подсказкой и выбором «проверить снова / без него / выйти», сервер в фоне, окошко ожидания, открытие браузера; при ошибке окно с концом журнала). Все сообщения обычные окна Windows (MessageBox). Журнал `data/logs/server.out.log` и `server.err.log`. `start-console.bat`: прежний консольный запуск для отладки. Диалоги автоматически не тестировались (нужен интерактивный экран), проверены разбор синтаксиса и вспомогательные функции.
 - Параметр `shuffle` в `POST .../sessions` и галочка «Перемешать вопросы» (перемешивает и режим «слабые»).
+- Напоминание про LM Studio: `GET /api/health` возвращает `lmstudio.hint` (какую модель загрузить, контекст 8192, порт 1234; имя модели в `lmstudio.recommended_model` в `config.yaml`). В интерфейсе красная плашка под шапкой, сама проверяет каждые 5 с и пропадает, когда LM Studio готов. `start.ps1` при неотвечающем LM Studio показывает ту же подсказку окном Windows (Да: проверить снова, Нет: запустить без него, Отмена: выйти). Тесты: 316.
 - Автоостановка: страница шлёт `POST /api/ping` каждые 15 с, `app/watchdog.py` завершает сервер (`os._exit(0)`), если после первого ping тишина дольше `server.idle_timeout_s` (150 с); отключается `server.stop_when_closed: false`. Тесты: 315.
 - Удаление собеседования: `DELETE /api/interviews/{id}` (204), `Storage.delete_interview` стирает всю папку собеседования; кнопка «Удалить» на главной с подтверждением. Тесты: 311.
 - Иконки: `static/favicon.svg` (вкладка браузера), `interview-trainer.ico` в корне (для ярлыка `start.bat`; ярлыки `*.lnk` в git не попадают). Картинки README: `assets/readme/hero.svg`, `pipeline.svg`.

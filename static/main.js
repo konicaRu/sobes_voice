@@ -29,13 +29,20 @@ async function openHistory(interviewId) {
   await showHistory(interviewId);
 }
 
+const LM_RECHECK_MS = 5000;
+
 async function refreshStatus() {
   const status = $('status');
   try {
     const lm = (await json('/api/health')).lmstudio;
     status.className = `status ${lm.ok ? 'ok' : 'bad'}`;
     status.textContent = lm.ok ? `LM Studio: ${lm.model}` : 'LM Studio недоступен';
-    if (!lm.ok) showError(lm.error);
+    const hint = $('lm-hint');
+    hint.hidden = lm.ok;
+    if (!lm.ok) {
+      hint.textContent = `${lm.error} ${lm.hint}`;
+      setTimeout(refreshStatus, LM_RECHECK_MS); // плашка сама пропадёт, когда LM Studio заработает
+    }
   } catch {
     status.className = 'status bad';
     status.textContent = 'Сервер недоступен';

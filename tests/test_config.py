@@ -26,3 +26,12 @@ def test_glossary_fixes_real_a_b_misrecognitions():
     fixes = load_glossary(ROOT / "glossary.yaml").stt_fix
     assert apply_stt_fixes("Амба-тест проводится для того", fixes) == "A/B-тест проводится для того"
     assert apply_stt_fixes("запускали амба тест на группе", fixes) == "запускали A/B-тест на группе"
+
+
+def test_lmstudio_hint_names_recommended_model_context_and_port():
+    from app.config import Config, lmstudio_hint
+
+    config = Config()
+    config.lmstudio.recommended_model = "my-model"
+    hint = lmstudio_hint(config)
+    assert "my-model" in hint and "8192" in hint and "1234" in hint

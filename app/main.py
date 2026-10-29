@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
-from app.config import ROOT, load_config, load_glossary
+from app.config import ROOT, lmstudio_hint, load_config, load_glossary
 from app.documents import MAX_UPLOAD_BYTES, DocumentError, extract_text, safe_filename
 from app.generation import MAX_VACANCY_CHARS as MAX_GENERATION_VACANCY_CHARS
 from app.generation import generate_questions, generation_percent, validate_counts
@@ -185,9 +185,9 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     @app.get("/api/health")
     def health():
         try:
-            lmstudio = {"ok": True, "model": app.state.llm.get_model(), "error": None}
+            lmstudio = {"ok": True, "model": app.state.llm.get_model(), "error": None, "hint": None}
         except LlmError as exc:
-            lmstudio = {"ok": False, "model": None, "error": str(exc)}
+            lmstudio = {"ok": False, "model": None, "error": str(exc), "hint": lmstudio_hint(config)}
         return {
             "lmstudio": lmstudio,
             "stt": {"ok": app.state.stt is not None},

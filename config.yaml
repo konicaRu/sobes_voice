@@ -4,6 +4,7 @@ lmstudio:
   model: auto            # auto = первая загруженная модель из /v1/models
   temperature: 0.3
   max_tokens: 1200
+  recommended_model: qwen2.5-14b-instruct-1m  # что напоминать загрузить в LM Studio
   disable_thinking: true # добавлять /no_think, вырезать <think>…</think>
   timeout_s: 120
 stt:
