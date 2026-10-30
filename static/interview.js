@@ -255,6 +255,11 @@ async function processAnswer(wav) {
     $('feedback-card').hidden = true;
     state.statuses[q] = 'answered';
 
+    if (!$('review-check').checked) {
+      setPhase('idle');
+      return;
+    }
+
     setPhase('reviewing');
     const review = await json(`/api/sessions/${state.sid}/review`, {
       method: 'POST',
@@ -321,6 +326,19 @@ async function skipQuestion() {
   await nextQuestion();
 }
 
+// выбор «разбирать ответ» помним между запусками; без localStorage просто включено
+function initReviewToggle() {
+  const check = $('review-check');
+  try {
+    check.checked = localStorage.getItem('reviewEnabled') !== 'false';
+  } catch { /* localStorage недоступен */ }
+  check.addEventListener('change', () => {
+    try {
+      localStorage.setItem('reviewEnabled', String(check.checked));
+    } catch { /* localStorage недоступен */ }
+  });
+}
+
 export function initInterview({ onBack, onFinish }) {
   callbacks = { onBack, onFinish };
   $('mic-btn').addEventListener('click', toggleRecording);
@@ -334,6 +352,7 @@ export function initInterview({ onBack, onFinish }) {
   $('next-btn').addEventListener('click', nextQuestion);
   $('back-btn').addEventListener('click', () => callbacks.onBack());
   $('skip-btn').addEventListener('click', skipQuestion);
+  initReviewToggle();
   $('finish-btn').addEventListener('click', () => callbacks.onFinish(state.sid));
   $('toggle-text-btn').addEventListener('click', () => {
     state.textVisible = !state.textVisible;
