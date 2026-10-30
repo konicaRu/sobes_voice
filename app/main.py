@@ -149,6 +149,13 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     review_cancel = threading.Event()  # один пользователь: флаг «прервать разбор» общий
     jobs = JobTracker()  # фоновые задачи: сборка профиля, генерация вопросов
 
+    @app.middleware("http")
+    async def revalidate_static(request: Request, call_next):
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"  # браузер сверяет версию (ETag) и не держит старые скрипты
+        return response
+
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
         return JSONResponse(status_code=503, content={"detail": str(exc)})

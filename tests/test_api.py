@@ -142,6 +142,12 @@ def test_resources_probe_failure_is_500_with_russian_message(make_client):
     assert response.json()["detail"] == "Не удалось проверить ресурсы компьютера."
 
 
+def test_static_files_are_revalidated_so_browser_never_keeps_stale_scripts(make_client):
+    client = make_client()
+    for path in ("/", "/main.js", "/settings.js"):
+        assert client.get(path).headers["cache-control"] == "no-cache"
+
+
 def test_tts_returns_wav(make_client):
     tts = FakeTts()
     response = make_client(tts=tts).post("/api/tts", json={"text": "Привет"})
