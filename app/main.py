@@ -30,6 +30,7 @@ from app.report import (
     session_stats,
     weak_questions,
 )
+from app.resources import collect as collect_resources
 from app.review import MAX_VACANCY_CHARS, review_answer
 from app.spoken import humanize_question
 from app.settings import (
@@ -122,7 +123,7 @@ def clean_questions(questions: list[Question]) -> list[Question]:
     return cleaned
 
 
-def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage=None) -> FastAPI:
+def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage=None, resources=None) -> FastAPI:
     config = config or load_config()
     glossary = glossary or load_glossary()
     storage = storage or Storage(ROOT / config.paths.data_dir)
@@ -204,6 +205,13 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     @app.post("/api/ping", status_code=204)
     def ping():
         app.state.heartbeat.ping()
+
+    @app.get("/api/resources")
+    def get_resources():
+        try:
+            return (resources or collect_resources)()
+        except Exception as exc:
+            raise HTTPException(500, "Не удалось проверить ресурсы компьютера.") from exc
 
     @app.post("/api/tts")
     def tts_endpoint(body: TtsRequest):

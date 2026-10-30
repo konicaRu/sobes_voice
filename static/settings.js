@@ -66,7 +66,57 @@ async function testVoice() {
   }
 }
 
+const ROLE_LABELS = { needed: 'нужно тренажёру', system: 'системное', closable: 'можно закрыть' };
+
+function formatGb(mb) {
+  return `${(mb / 1024).toFixed(1)} ГБ`;
+}
+
+function resourceTable(title, summary, top, unit) {
+  const box = element('div', 'resource-table');
+  box.append(element('h3', '', title), element('p', 'muted', summary));
+  const list = element('ul', 'resource-list');
+  top.forEach((item) => {
+    const row = element('li', `role-${item.role}`);
+    const count = item.count > 1 ? ` ×${item.count}` : '';
+    const value = unit === '%' ? `${item.value}%` : formatGb(item.value);
+    row.append(element('span', 'resource-name', `${item.name}${count}`), element('span', '', value), element('span', 'role-badge', ROLE_LABELS[item.role]));
+    list.append(row);
+  });
+  box.append(list.children.length ? list : element('p', 'muted', 'Ничего заметного.'));
+  return box;
+}
+
+function renderResources(data) {
+  $('resources-advice').replaceChildren(...data.advice.map((line) => element('li', '', line)));
+  const vramSummary = data.vram.total_mb === null
+    ? 'Видеокарта NVIDIA не найдена.'
+    : `Занято ${formatGb(data.vram.used_mb)} из ${formatGb(data.vram.total_mb)}`;
+  $('resources-tables').replaceChildren(
+    resourceTable('Видеопамять', vramSummary, data.vram.top, 'mb'),
+    resourceTable('Оперативная память', `Занято ${formatGb(data.ram.used_mb)} из ${formatGb(data.ram.total_mb)}`, data.ram.top, 'mb'),
+    resourceTable('Процессор', `Загружен на ${data.cpu.percent}%`, data.cpu.top, '%'),
+  );
+  $('resources-result').hidden = false;
+}
+
+async function checkResources() {
+  const button = $('resources-btn');
+  button.disabled = true;
+  $('resources-status').textContent = 'Проверяю…';
+  try {
+    renderResources(await json('/api/resources'));
+    $('resources-status').textContent = '';
+  } catch (error) {
+    $('resources-status').textContent = '';
+    showError(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 export function initSettings({ onOpen, onBack }) {
+  $('resources-btn').addEventListener('click', checkResources);
   $('settings-open-btn').addEventListener('click', onOpen);
   $('settings-back-btn').addEventListener('click', onBack);
   $('set-test-voice-btn').addEventListener('click', testVoice);

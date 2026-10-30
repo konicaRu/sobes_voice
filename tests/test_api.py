@@ -80,10 +80,10 @@ class FakeLlm:
 
 @pytest.fixture
 def make_client(tmp_path):
-    def factory(stt=None, tts=None, llm=None, config=None, glossary=None):
+    def factory(stt=None, tts=None, llm=None, config=None, glossary=None, resources=None):
         app = create_app(
             config=config or Config(), glossary=glossary or Glossary(), storage=Storage(tmp_path),
-            stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(),
+            stt=stt or FakeStt(), tts=tts or FakeTts(), llm=llm or FakeLlm(), resources=resources,
         )
         return TestClient(app)
 
@@ -125,6 +125,21 @@ def test_health_reports_llm_error_without_failing(make_client):
     lmstudio = response.json()["lmstudio"]
     assert lmstudio["ok"] is False and lmstudio["error"] == "LM Studio не отвечает."
     assert "qwen2.5-14b-instruct-1m" in lmstudio["hint"] and "8192" in lmstudio["hint"] and "1234" in lmstudio["hint"]
+
+
+def test_resources_endpoint_returns_probe_report(make_client):
+    snapshot = {"advice": ["Ресурсов достаточно: ничего закрывать не нужно."], "cpu": {}, "ram": {}, "vram": {}}
+    body = make_client(resources=lambda: snapshot).get("/api/resources").json()
+    assert body == snapshot
+
+
+def test_resources_probe_failure_is_500_with_russian_message(make_client):
+    def broken():
+        raise OSError("boom")
+
+    response = make_client(resources=broken).get("/api/resources")
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Не удалось проверить ресурсы компьютера."
 
 
 def test_tts_returns_wav(make_client):

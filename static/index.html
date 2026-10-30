@@ -229,6 +229,18 @@
         <h2>Распознавание речи</h2>
         <p id="set-stt" class="muted"></p>
       </div>
+      <div class="card">
+        <h2>Ресурсы компьютера</h2>
+        <p class="muted">Если разбор или распознавание идут медленно, проверьте, что занимает процессор, оперативную и видеопамять. Программы сами не закрываются: решаете вы.</p>
+        <div class="row">
+          <button id="resources-btn">Проверить</button>
+          <span id="resources-status" class="muted"></span>
+        </div>
+        <div id="resources-result" hidden>
+          <ul id="resources-advice" class="advice"></ul>
+          <div id="resources-tables" class="resource-tables"></div>
+        </div>
+      </div>
       <div class="row">
         <button id="settings-save-btn" class="primary">Сохранить</button>
         <span id="settings-status" class="muted"></span>
