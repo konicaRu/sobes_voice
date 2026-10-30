@@ -1,5 +1,6 @@
 import os
 import random
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -16,7 +17,7 @@ from app.documents import MAX_UPLOAD_BYTES, DocumentError, extract_text, safe_fi
 from app.generation import MAX_VACANCY_CHARS as MAX_GENERATION_VACANCY_CHARS
 from app.generation import generate_questions, generation_percent, validate_counts
 from app.jobs import JobTracker
-from app.llm import LlmError, build_llm
+from app.llm import LlmCancelled, LlmError, build_llm
 from app.models import MAX_QUESTION_CHARS, MAX_QUESTIONS, SLOTS, Attempt, Question
 from app.profile import MAX_PROFILE_CHARS, build_profile, profile_percent
 from app.questions import merge_questions, parse_questions
@@ -30,6 +31,7 @@ from app.report import (
     weak_questions,
 )
 from app.review import MAX_VACANCY_CHARS, review_answer
+from app.spoken import humanize_question
 from app.settings import (
     RATES,
     SPEAKERS,
@@ -143,11 +145,16 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
     app = FastAPI(title="Interview Trainer", lifespan=lifespan)
     app.state.stt, app.state.tts, app.state.llm = stt, tts, llm
     app.state.heartbeat = Heartbeat()
+    review_cancel = threading.Event()  # один пользователь: флаг «прервать разбор» общий
     jobs = JobTracker()  # фоновые задачи: сборка профиля, генерация вопросов
 
     @app.exception_handler(LlmError)
     async def llm_error_handler(request: Request, exc: LlmError):
         return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(LlmCancelled)
+    async def llm_cancelled_handler(request: Request, exc: LlmCancelled):
+        return JSONResponse(status_code=409, content={"detail": "Разбор прерван."})
 
     @app.exception_handler(NotFoundError)
     async def not_found_handler(request: Request, exc: NotFoundError):
@@ -483,12 +490,34 @@ def create_app(config=None, glossary=None, stt=None, tts=None, llm=None, storage
             raise HTTPException(409, "Сначала запишите ответ на этот вопрос.")
         attempt = attempts[-1]
         started = time.perf_counter()
+        review_cancel.clear()
         result = review_answer(
-            app.state.llm, session.questions[body.q], attempt.text, attempt.seconds, **review_context(session.interview_id)
+            app.state.llm, session.questions[body.q], attempt.text, attempt.seconds,
+            should_cancel=review_cancel.is_set, **review_context(session.interview_id),
         )
         attempt.review = result.model_dump()
         storage.save_session(session)
         return {**result.model_dump(), "elapsed": time.perf_counter() - started}
+
+    @app.post("/api/sessions/{sid}/questions/{q}/spoken")
+    def spoken_question(sid: str, q: int):
+        session = storage.load_session(sid)
+        if not 0 <= q < len(session.questions):
+            raise HTTPException(404, "Вопрос не найден.")
+        if q in session.spoken:
+            return {"text": session.spoken[q], "humanized": True}
+        original = session.questions[q].text
+        text = humanize_question(app.state.llm, original)
+        if text == original:
+            return {"text": original, "humanized": False}  # не кэшируем: в другой раз модель может ответить
+        session.spoken[q] = text
+        storage.save_session(session)
+        return {"text": text, "humanized": True}
+
+    @app.post("/api/sessions/{sid}/review/cancel", status_code=204)
+    def cancel_review(sid: str):
+        storage.load_session(sid)
+        review_cancel.set()
 
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app

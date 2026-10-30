@@ -6,11 +6,12 @@ from fastapi.testclient import TestClient
 
 from app.config import Config, Glossary, SttConfig
 from app.generation import GeneratedQuestion, QuestionBatch
-from app.llm import LlmError
+from app.llm import LlmCancelled, LlmError
 from app.main import create_app
 from app.profile import ProfileDraft
 from app.report import ReportDraft
 from app.review import PointCheck, ReviewDraft
+from app.spoken import SpokenDraft
 from app.storage import Storage
 from app.stt import AudioError, Transcription
 
@@ -72,6 +73,8 @@ class FakeLlm:
             return BATCH
         if model_cls is ReportDraft:
             return REPORT_DRAFT
+        if model_cls is SpokenDraft:
+            return SpokenDraft(spoken=f"Ну, {messages[-1]['content'].split(': ', 1)[-1]}")
         return RESULT
 
 
@@ -536,6 +539,63 @@ def test_review_llm_error_is_503_with_message(make_client):
     response = client.post(f"/api/sessions/{sid}/review", json={"q": 0})
     assert response.status_code == 503
     assert response.json()["detail"] == "LM Studio не отвечает."
+
+
+def test_review_cancelled_is_409_and_not_saved(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    sid = new_session(client)["sid"]
+    client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
+    llm.error = LlmCancelled()
+    response = client.post(f"/api/sessions/{sid}/review", json={"q": 0})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Разбор прерван."
+
+
+def test_cancel_endpoint_flips_flag_seen_by_running_review(make_client):
+    seen = {}
+
+    class SpyLlm(FakeLlm):
+        def chat_json(self, messages, model_cls, **kwargs):
+            seen["cancel"] = kwargs["should_cancel"]
+            seen["before"] = kwargs["should_cancel"]()
+            return super().chat_json(messages, model_cls, **kwargs)
+
+    client = make_client(llm=SpyLlm())
+    sid = new_session(client)["sid"]
+    client.post(f"/api/sessions/{sid}/transcribe?q=0", content=b"x")
+    client.post(f"/api/sessions/{sid}/review", json={"q": 0})
+    assert seen["before"] is False
+    assert client.post(f"/api/sessions/{sid}/review/cancel").status_code == 204
+    assert seen["cancel"]() is True
+    client.post(f"/api/sessions/{sid}/review", json={"q": 0})
+    assert seen["before"] is False  # новый разбор сбрасывает флаг
+
+
+def test_spoken_question_is_humanized_and_cached(make_client):
+    llm = FakeLlm()
+    client = make_client(llm=llm)
+    session = new_session(client)
+    first = client.post(f"/api/sessions/{session['sid']}/questions/0/spoken").json()
+    assert first["humanized"] is True and first["text"].startswith("Ну, ")
+    again = client.post(f"/api/sessions/{session['sid']}/questions/0/spoken").json()
+    assert again == first and len(llm.calls) == 1
+
+
+def test_spoken_question_falls_back_to_original_without_caching(make_client):
+    llm = FakeLlm(error=LlmError("нет связи"))
+    client = make_client(llm=llm)
+    session = new_session(client)
+    body = client.post(f"/api/sessions/{session['sid']}/questions/0/spoken").json()
+    assert body == {"text": session["questions"][0]["text"], "humanized": False}
+    llm.error = None
+    assert client.post(f"/api/sessions/{session['sid']}/questions/0/spoken").json()["humanized"] is True
+
+
+def test_spoken_question_unknown_index_is_404(make_client):
+    client = make_client()
+    sid = new_session(client)["sid"]
+    assert client.post(f"/api/sessions/{sid}/questions/99/spoken").status_code == 404
 
 
 # ---------- пропуск, отчёт, история, слабые вопросы ----------

@@ -218,5 +218,7 @@ header #settings-open-btn { margin-left: auto; margin-right: 16px; }
 .field select { min-width: 260px; padding: 8px 10px; font: inherit; }
 button.danger { border-color: #d64545; color: #d64545; background: transparent; }
 button.danger:hover:not(:disabled) { background: #d64545; color: #fff; }
+#cancel-review-btn { margin-top: 12px; }
 
 .lm-hint { max-width: 980px; margin: 0 auto 8px; }
+.toggles label { display: block; margin: 4px 0; }

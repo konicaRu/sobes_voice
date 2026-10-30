@@ -164,7 +164,7 @@ TOPIC_PROMPT = (
 )
 
 
-def _same_topic(llm, question: Question, draft: ReviewDraft) -> bool:
+def _same_topic(llm, question: Question, draft: ReviewDraft, should_cancel=None) -> bool:
     """Арбитр для неуверенного «частично»: короткая отдельная проверка надёжнее, чем решение внутри большого разбора."""
     messages = [
         {"role": "system", "content": TOPIC_PROMPT},
@@ -174,7 +174,7 @@ def _same_topic(llm, question: Question, draft: ReviewDraft) -> bool:
         },
     ]
     try:
-        return llm.chat_json(messages, TopicCheck, temperature=0.0).same_topic == "да"
+        return llm.chat_json(messages, TopicCheck, temperature=0.0, should_cancel=should_cancel).same_topic == "да"
     except LlmError:
         return True  # не получилось проверить: не наказываем кандидата
 
@@ -187,12 +187,15 @@ def review_answer(
     profile: str = "",
     vacancy: str = "",
     terms: Iterable[str] = (),
+    should_cancel=None,
 ) -> ReviewResult:
     messages = build_messages(question, transcript, seconds, profile, vacancy, terms)
-    draft = llm.chat_json(messages, ReviewDraft, temperature=REVIEW_TEMPERATURE)
+    draft = llm.chat_json(messages, ReviewDraft, temperature=REVIEW_TEMPERATURE, should_cancel=should_cancel)
     fields = draft.model_dump()
 
-    off_topic = draft.on_topic == "нет" or (draft.on_topic == "частично" and not _same_topic(llm, question, draft))
+    off_topic = draft.on_topic == "нет" or (
+        draft.on_topic == "частично" and not _same_topic(llm, question, draft, should_cancel)
+    )
     if off_topic:  # ответ про другое: оценка и текст формульные, модель тут легко ошибается в сторону мягкости
         fields.update(
             score=1,

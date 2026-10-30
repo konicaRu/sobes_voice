@@ -83,6 +83,8 @@ function setPhase(phase) {
     }, 500);
   }
   mic.disabled = !['idle', 'recording'].includes(phase);
+  $('cancel-review-btn').hidden = phase !== 'reviewing';
+  $('cancel-review-btn').disabled = false;
   const free = phase === 'idle';
   const answered = !$('transcript-card').hidden;
   $('retry-btn').disabled = !free || !answered;
@@ -142,11 +144,25 @@ async function speak(text) {
   state.audio = null;
 }
 
+// модель переписывает вопрос в разговорную речь; при любой неудаче читаем исходный текст
+async function spokenText(q) {
+  const original = state.questions[q].text;
+  if (!$('live-speech').checked) return original;
+  try {
+    return (await json(`/api/sessions/${state.sid}/questions/${q}/spoken`, { method: 'POST' })).text;
+  } catch {
+    return original;
+  }
+}
+
 async function speakQuestion() {
   showError('');
   setPhase('speaking');
   try {
-    await speak(state.questions[state.index].text);
+    const q = state.index;
+    const text = await spokenText(q);
+    if (q + 1 < state.questions.length) spokenText(q + 1); // заготовка следующего вопроса, пока вы отвечаете
+    await speak(text);
   } catch (error) {
     showError(error.message);
   }
@@ -279,6 +295,16 @@ async function processAnswer(wav) {
   setPhase('idle');
 }
 
+// запрос разбора сам завершится ошибкой 409 «Разбор прерван.», processAnswer её покажет
+async function cancelReview() {
+  $('cancel-review-btn').disabled = true;
+  try {
+    await api(`/api/sessions/${state.sid}/review/cancel`, { method: 'POST' });
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
 function toggleRecording() {
   if (state.phase === 'idle') startRecording();
   else if (state.phase === 'recording') stopRecording();
@@ -326,15 +352,15 @@ async function skipQuestion() {
   await nextQuestion();
 }
 
-// выбор «разбирать ответ» помним между запусками; без localStorage просто включено
-function initReviewToggle() {
-  const check = $('review-check');
+// выбор галочки помним между запусками; без localStorage она просто включена
+function rememberCheckbox(id, key) {
+  const check = $(id);
   try {
-    check.checked = localStorage.getItem('reviewEnabled') !== 'false';
+    check.checked = localStorage.getItem(key) !== 'false';
   } catch { /* localStorage недоступен */ }
   check.addEventListener('change', () => {
     try {
-      localStorage.setItem('reviewEnabled', String(check.checked));
+      localStorage.setItem(key, String(check.checked));
     } catch { /* localStorage недоступен */ }
   });
 }
@@ -352,7 +378,9 @@ export function initInterview({ onBack, onFinish }) {
   $('next-btn').addEventListener('click', nextQuestion);
   $('back-btn').addEventListener('click', () => callbacks.onBack());
   $('skip-btn').addEventListener('click', skipQuestion);
-  initReviewToggle();
+  $('cancel-review-btn').addEventListener('click', cancelReview);
+  rememberCheckbox('review-check', 'reviewEnabled');
+  rememberCheckbox('live-speech', 'liveSpeech');
   $('finish-btn').addEventListener('click', () => callbacks.onFinish(state.sid));
   $('toggle-text-btn').addEventListener('click', () => {
     state.textVisible = !state.textVisible;

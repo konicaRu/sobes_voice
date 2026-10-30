@@ -129,6 +129,7 @@
           <div class="mic-area">
             <button id="mic-btn" class="mic" disabled>Готов</button>
             <div class="hint">Пробел — начать / остановить запись</div>
+            <button id="cancel-review-btn" class="danger" hidden>Прервать разбор</button>
           </div>
 
           <div id="transcript-card" class="card" hidden>
@@ -155,6 +156,7 @@
           </div>
 
           <div class="toggles">
+            <label><input type="checkbox" id="live-speech" checked> Живая речь интервьюера</label>
             <label><input type="checkbox" id="review-check" checked> Разбирать ответ моделью</label>
             <label><input type="checkbox" id="speak-feedback" checked> Озвучивать фидбек</label>
           </div>

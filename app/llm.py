@@ -15,6 +15,10 @@ class LlmError(Exception):
     """Ошибка LLM с сообщением на русском для показа в интерфейсе."""
 
 
+class LlmCancelled(Exception):
+    """Пользователь прервал запрос. Не LlmError, чтобы её не глотали «мягкие» проверки."""
+
+
 def strip_think(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
@@ -80,8 +84,11 @@ class LlmClient:
         model_cls: type[T],
         temperature: float | None = None,
         on_progress: Callable[[int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> T:
-        """С on_progress ответ читается потоком, и колбэк получает число уже написанных символов."""
+        """С on_progress ответ читается потоком, и колбэк получает число уже написанных символов.
+
+        should_cancel тоже включает поток: если он вернул True, чтение обрывается (LM Studio перестаёт генерировать)."""
         model = self.get_model()
         temperature = self._temperature if temperature is None else temperature
         working = [dict(m) for m in messages]
@@ -90,6 +97,8 @@ class LlmClient:
             "json_schema": {"name": model_cls.__name__, "strict": True, "schema": model_cls.model_json_schema()},
         }
         for _ in range(self._retries + 1):
+            if should_cancel is not None and should_cancel():
+                raise LlmCancelled()
             started = time.perf_counter()
             options = dict(
                 model=model,
@@ -99,11 +108,13 @@ class LlmClient:
                 response_format=response_format,
             )
             try:
-                if on_progress is None:
+                if on_progress is None and should_cancel is None:
                     response = self._client.chat.completions.create(**options)
                     raw = response.choices[0].message.content or ""
                 else:
-                    response, raw = None, self._read_stream(options, on_progress)
+                    response, raw = None, self._read_stream(options, on_progress, should_cancel)
+            except LlmCancelled:
+                raise
             except Exception as exc:
                 raise LlmError(f"LM Studio не ответил: {exc}") from exc
             self._log(model, working, raw, time.perf_counter() - started, response)
@@ -116,15 +127,27 @@ class LlmClient:
                 ]
         raise LlmError(f"Модель не вернула корректный JSON после {self._retries + 1} попыток.")
 
-    def _read_stream(self, options: dict, on_progress: Callable[[int], None]) -> str:
+    def _read_stream(
+        self,
+        options: dict,
+        on_progress: Callable[[int], None] | None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> str:
         parts: list[str] = []
         written = 0
-        for chunk in self._client.chat.completions.create(stream=True, **options):
+        stream = self._client.chat.completions.create(stream=True, **options)
+        for chunk in stream:
+            if should_cancel is not None and should_cancel():
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    close()  # обрыв соединения останавливает генерацию в LM Studio
+                raise LlmCancelled()
             piece = chunk.choices[0].delta.content if chunk.choices else None
             if piece:
                 parts.append(piece)
                 written += len(piece)
-                on_progress(written)
+                if on_progress is not None:
+                    on_progress(written)
         return "".join(parts)
 
     def _prepare(self, messages: list[dict]) -> list[dict]:

@@ -4,7 +4,7 @@ from types import SimpleNamespace as NS
 import pytest
 from pydantic import BaseModel
 
-from app.llm import LlmClient, LlmError, extract_json, strip_think
+from app.llm import LlmCancelled, LlmClient, LlmError, extract_json, strip_think
 
 
 class Out(BaseModel):
@@ -153,3 +153,24 @@ def test_calls_are_logged_to_jsonl(tmp_path):
     assert record["response"] == '{"verdict": "ok", "score": 4}'
     assert record["messages"][0]["content"] == "привет"
     assert record["elapsed_s"] >= 0
+
+
+def test_cancel_during_stream_raises_without_retry():
+    fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}'])
+    answers = iter([False, False, True])  # перед запросом, после первого куска, после второго
+    with pytest.raises(LlmCancelled):
+        make(fake).chat_json([{"role": "user", "content": "x"}], Out, should_cancel=lambda: next(answers))
+    assert len(fake.requests) == 1 and fake.requests[0]["stream"] is True
+
+
+def test_cancel_before_request_does_not_call_the_model():
+    fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}'])
+    with pytest.raises(LlmCancelled):
+        make(fake).chat_json([{"role": "user", "content": "x"}], Out, should_cancel=lambda: True)
+    assert fake.requests == []
+
+
+def test_should_cancel_false_still_returns_result_via_stream():
+    fake = FakeOpenAI(replies=['{"verdict": "ok", "score": 4}'])
+    result = make(fake).chat_json([{"role": "user", "content": "x"}], Out, should_cancel=lambda: False)
+    assert result.score == 4

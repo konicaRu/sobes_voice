@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.llm import LlmError
+from app.llm import LlmCancelled, LlmError
 from app.models import Question
 from app.review import (
     MAX_ITEMS,
@@ -329,3 +329,16 @@ def test_spoken_summary_without_sentence_boundary_is_hard_cut():
 def test_draft_rejects_bad_score():
     with pytest.raises(ValidationError):
         make_draft(score=9)
+
+
+def test_should_cancel_is_passed_to_every_model_call():
+    llm = FakeLlm(make_draft(on_topic="частично"), same_topic="да")
+    stop = lambda: False  # noqa: E731
+    review_answer(llm, QUESTION, TRANSCRIPT, seconds=10, should_cancel=stop)
+    assert len(llm.calls) == 2 and all(call[2]["should_cancel"] is stop for call in llm.calls)
+
+
+def test_cancel_in_topic_check_is_not_swallowed():
+    llm = FakeLlm(make_draft(on_topic="частично"), same_topic=LlmCancelled())
+    with pytest.raises(LlmCancelled):
+        review_answer(llm, QUESTION, TRANSCRIPT, seconds=10)

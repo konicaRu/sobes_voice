@@ -44,4 +44,5 @@ class Session(BaseModel):
     questions: list[Question]
     attempts: list[Attempt] = Field(default_factory=list)
     skipped: list[int] = Field(default_factory=list)
+    spoken: dict[int, str] = Field(default_factory=dict)  # кэш «живой» озвучки вопросов по номеру
     finished_at: str | None = None
